@@ -62,15 +62,13 @@ parts:
       - python3-venv
       - python3-pip
       - python3-tk
-      - python3-pil
-      - python3-pil.imagetk
       - tk
       - tcl
       - build-essential
       - libssl-dev
       - libffi-dev
       - pkg-config
-      - zenity
+      - libpython3.12
 
     stage-packages:
       - libx11-6
