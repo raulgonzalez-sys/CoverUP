@@ -55,7 +55,7 @@ parts:
     plugin: nil
     source: https://github.com/digidigital/CoverUP.git
     source-type: git
-    source-tag: v0.4.1
+    source-tag: 0.4.1
 
     build-packages:
       - python3
