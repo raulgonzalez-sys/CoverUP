@@ -1,0 +1,109 @@
+version: 1
+
+AppDir:
+  path: ./AppDir
+
+  before_bundle:
+    - |
+      set -euo pipefail
+      set -x
+
+      # sichere Ausgabe ohne set -u crash
+      echo "WORKDIR = $(pwd)"
+      #echo "APPDIR = ${APPDIR:-<unset>}"
+      export APPDIR="$(pwd)/AppDir"
+
+      # Clone the repository if not already present
+      if [ ! -d "CoverUP" ]; then
+        git clone --depth 1 --branch 0.4.2 https://github.com/digidigital/CoverUP.git
+      fi
+      cd CoverUP
+
+      # Create virtual environment and install dependencies
+      python3 -m venv venv
+      ./venv/bin/python -m pip install --upgrade pip setuptools wheel --disable-pip-version-check --no-cache-dir
+
+      # Install PyInstaller and project dependencies
+      ./venv/bin/python -m pip install "pyinstaller>=5.0.0" --no-cache-dir
+      ./venv/bin/python -m pip install . --no-cache-dir
+
+      # Build with PyInstaller in onedir mode
+      ./venv/bin/python -m PyInstaller --noconfirm --onedir --name coverup CoverUP.py
+
+      # Ensure AppDir exists and copy built files
+      mkdir -p "$APPDIR/usr/bin"
+      echo "Copying from $(pwd)/dist/coverup to $APPDIR/usr/bin"
+      cp -r dist/coverup/* "$APPDIR/usr/bin/"
+      chmod +x "$APPDIR/usr/bin/coverup" || true
+
+      # Copy icons
+      mkdir -p "$APPDIR/usr/share/icons/hicolor/scalable/apps"
+      cp CoverUP.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/coverup.svg" || true
+
+      # Copy fontconfig (best effort)
+      mkdir -p "$APPDIR/etc/fonts"
+      cp -r /etc/fonts/* "$APPDIR/etc/fonts/" || true
+
+  app_info:
+    id: de.digidigital.coverup
+    name: CoverUP PDF
+    icon: coverup
+    version: 0.4.2
+    exec: usr/bin/coverup
+    exec_args: $@
+
+  apt:
+    arch: amd64
+    sources:
+      - sourceline: deb http://archive.ubuntu.com/ubuntu/ jammy main universe
+        key_url: http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x871920D1991BC93C
+
+    include:
+      - libx11-6
+      - libxext6
+      - libxrender1
+      - libxcb1
+      - libxau6
+      - libxdmcp6
+      - fontconfig
+      - fonts-dejavu-core
+      - fonts-dejavu-extra
+      - fonts-noto-core
+      - libtk8.6
+      - libtcl8.6
+      - libssl3
+      - libffi8
+
+    exclude:
+      - humanity-icon-theme
+      - hicolor-icon-theme
+      - adwaita-icon-theme
+
+  runtime:
+    env:
+      FONTCONFIG_PATH: '${APPDIR}/etc/fonts'
+      XDG_DATA_DIRS: '${APPDIR}/usr/share:${XDG_DATA_DIRS}'
+      TCL_LIBRARY: '${APPDIR}/usr/share/tcltk/tcl8.6'
+      TK_LIBRARY: '${APPDIR}/usr/share/tcltk/tk8.6'
+
+  files:
+    include: []
+    exclude:
+      - usr/share/man
+      - usr/share/doc
+      - usr/share/doc-base
+
+  test:
+    fedora-30:
+      image: appimagecrafters/tests-env:fedora-30
+      command: ./AppRun --version
+    debian-stable:
+      image: appimagecrafters/tests-env:debian-stable
+      command: ./AppRun --version
+    ubuntu-xenial:
+      image: appimagecrafters/tests-env:ubuntu-xenial
+      command: ./AppRun --version
+
+AppImage:
+  arch: x86_64
+  # update-information: gh-releases-zsync|digidigital|CoverUP|latest|CoverUP-*x86_64.AppImage.zsync
