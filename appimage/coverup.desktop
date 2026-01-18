@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=CoverUP PDF
+GenericName=PDF Redaction Tool
+Comment=Redact sensitive information in PDFs and images
+Exec=coverup %f
+Icon=coverup
+Terminal=false
+Type=Application
+Categories=Office;Utility;Graphics;
+MimeType=application/pdf;image/png;image/jpeg;
+StartupNotify=true
+Keywords=pdf;redact;privacy;censor;black;bar;

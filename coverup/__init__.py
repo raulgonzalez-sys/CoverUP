@@ -29,7 +29,7 @@ Example usage:
     $ python -m coverup
 """
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 __author__ = "Björn Seipel"
 __email__ = "support@digidigital.de"
 __license__ = "GPL-3.0"

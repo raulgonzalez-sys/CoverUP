@@ -244,9 +244,10 @@ def main():
             workfile_manager.save(images, current_page, fill_color, output_quality)
 
             # Open home-folder when first time loading a pdf
-            if first_load:
-                first_load = False
-                home_folder = Path.home()
+            if first_load:         
+                # Prefer SNAP_REAL_HOME if available 
+                snap_real = os.environ.get("SNAP_REAL_HOME")   
+                home_folder = Path(snap_real) if snap_real else Path.home()
             else:
                 home_folder = None
 
@@ -289,7 +290,7 @@ def main():
                     window['-PROGRESS-'].update(current_count=0)
                     current_page = flip_to_page(window, images, current_page)
                     window.set_title(_('app_title_with_file', filename=os.path.basename(file_path)))
-
+                    first_load = False
                 except Exception as e:
                     window['-PAGE_TOTAL-'].update('0')
                     window['-PROGRESS-'].update(current_count=0)

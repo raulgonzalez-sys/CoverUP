@@ -33,12 +33,18 @@ platforms:
     build-on: [amd64]
     build-for: [amd64]
 
+plugs:
+  shmem:
+    interface: shared-memory
+    private: true
+
 apps:
   coverup:
-    command: coverup/coverup
+    command: bin/launcher
     desktop: share/applications/coverup.desktop
     environment:
-      FONTCONFIG_PATH: $SNAP/etc/fonts
+      FONTCONFIG_PATH: $SNAP/fonts
+      FONTCONFIG_FILE: $SNAP/fonts/fonts.conf
       XDG_DATA_DIRS: $SNAP/usr/share:$XDG_DATA_DIRS
       GDK_SCALE: $GDK_SCALE
       GDK_DPI_SCALE: $GDK_DPI_SCALE
@@ -49,13 +55,17 @@ apps:
       - wayland
       - desktop
       - desktop-legacy
-
+      - network
+      - network-bind
+      - shmem
+      
 parts:
   coverup:
     plugin: nil
     source: https://github.com/digidigital/CoverUP.git
     source-type: git
-    source-tag: 0.4.1
+    source-tag: "0.4.1"
+
 
     build-packages:
       - python3
@@ -79,69 +89,86 @@ parts:
       - libxdmcp6
       - fontconfig
       - fonts-dejavu-core
-      - fonts-dejavu-extra
       - fonts-noto-core
 
     override-build: |
       set -euo pipefail
 
-      # Set version from git tag (strips leading 'v' if present)
       craftctl set version="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+      craftctl default
 
-      # keep default behavior for any craftctl-based flows
-      craftctl default || true
-
-      # Create and use a venv to avoid PEP 668 restrictions
-      VENV=$CRAFT_PART_BUILD/venv
+      # Build Python app using PyInstaller
+      VENV="$CRAFT_PART_BUILD/venv"
       python3 -m venv "$VENV"
       "$VENV/bin/python" -m pip install --upgrade pip setuptools wheel
-
-      # Install PyInstaller (>=5.0.0) and project dependencies into the venv
       "$VENV/bin/python" -m pip install "pyinstaller>=5.0.0"
-      # Install the project into the venv so PyInstaller can find package metadata
       "$VENV/bin/python" -m pip install .
 
-      # Build with PyInstaller in onedir mode (preserves _internal layout for >=5.0.0)
       "$VENV/bin/python" -m PyInstaller --noconfirm --onedir --name coverup CoverUP.py
 
-      # Copy the PyInstaller output directory into the part install area
-      mkdir -p $CRAFT_PART_INSTALL/coverup
-      cp -r dist/coverup/* $CRAFT_PART_INSTALL/coverup/
+      mkdir -p "$CRAFT_PART_INSTALL/coverup"
+      cp -r dist/coverup/* "$CRAFT_PART_INSTALL/coverup/"
+      chmod +x "$CRAFT_PART_INSTALL/coverup/coverup"
 
-      # Ensure the main binary is executable
-      if [ -f $CRAFT_PART_INSTALL/coverup/coverup ]; then
-        chmod +x $CRAFT_PART_INSTALL/coverup/coverup
-      fi
+      # -------------------------------
+      # FONTS + FONTCONFIG
+      # -------------------------------
+      mkdir -p "$CRAFT_PART_INSTALL/fonts"
 
-      # Copy host fontconfig data so fontconfig inside the snap uses the same rules
-      mkdir -p $CRAFT_PART_INSTALL/etc/fonts
-      cp -r /etc/fonts/* $CRAFT_PART_INSTALL/etc/fonts/ || true
+      printf '%s\n' \
+        '<?xml version="1.0"?>' \
+        '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">' \
+        '<fontconfig>' \
+        '  <dir>/snap/coverup/current/usr/share/fonts</dir>' \
+        '  <cachedir prefix="xdg">fontconfig</cachedir>' \
+        '  <config>' \
+        '    <rescan>' \
+        '      <int>30</int>' \
+        '    </rescan>' \
+        '  </config>' \
+        '</fontconfig>' \
+        > "$CRAFT_PART_INSTALL/fonts/fonts.conf"
 
-      # Desktop file
-      mkdir -p $CRAFT_PART_INSTALL/share/applications
-      cat > $CRAFT_PART_INSTALL/share/applications/coverup.desktop << 'EOF'
-      [Desktop Entry]
-      Name=CoverUP PDF
-      GenericName=PDF Redaction Tool
-      Comment=Redact sensitive information in PDFs and images
-      Exec=coverup %f
-      Icon=${SNAP}/share/icons/coverup.svg
-      Terminal=false
-      Type=Application
-      Categories=Office;Utility;Graphics;
-      MimeType=application/pdf;image/png;image/jpeg;
-      StartupNotify=true
-      Keywords=pdf;redact;privacy;censor;black;bar;
-      EOF
+      # -------------------------------
+      # LAUNCHER SCRIPT
+      # -------------------------------
+      mkdir -p "$CRAFT_PART_INSTALL/bin"
 
-      # Icons
-      mkdir -p $CRAFT_PART_INSTALL/share/icons
-      cp CoverUP.svg $CRAFT_PART_INSTALL/share/icons/coverup.svg || true
-      cp CoverUP.ico $CRAFT_PART_INSTALL/share/icons/coverup.ico || true
+      printf '%s\n' \
+        '#!/bin/sh' \
+        'export FONTCONFIG_PATH="$SNAP/fonts"' \
+        'export FONTCONFIG_FILE="$SNAP/fonts/fonts.conf"' \
+        'export XDG_DATA_HOME="$SNAP/usr/share"' \
+        'exec "$SNAP/coverup/coverup" "$@"' \
+        > "$CRAFT_PART_INSTALL/bin/launcher"
+
+      chmod +x "$CRAFT_PART_INSTALL/bin/launcher"
+
+      # -------------------------------
+      # DESKTOP FILE
+      # -------------------------------
+      mkdir -p "$CRAFT_PART_INSTALL/share/applications"
+
+      printf '%s\n' \
+        '[Desktop Entry]' \
+        'Name=CoverUP PDF' \
+        'GenericName=PDF Redaction Tool' \
+        'Comment=Redact sensitive information in PDFs and images' \
+        'Exec=coverup %f' \
+        'Icon=${SNAP}/share/icons/coverup.svg' \
+        'Terminal=false' \
+        'Type=Application' \
+        'Categories=Office;Utility;Graphics;' \
+        'MimeType=application/pdf;image/png;image/jpeg;' \
+        'StartupNotify=true' \
+        'Keywords=pdf;redact;privacy;censor;black;bar;' \
+        > "$CRAFT_PART_INSTALL/share/applications/coverup.desktop"
+
+      mkdir -p "$CRAFT_PART_INSTALL/share/icons"
+      cp CoverUP.svg "$CRAFT_PART_INSTALL/share/icons/coverup.svg" || true
+      cp CoverUP.ico "$CRAFT_PART_INSTALL/share/icons/coverup.ico" || true
 
     override-prime: |
-      craftctl default || true
-      # Remove BLT if present to silence lint warnings
-      rm -f $CRAFT_PRIME/usr/lib/libBLTlite* || true
-      # Remove libXfixes if it was pulled in transitively to silence the linter
-      rm -f $CRAFT_PRIME/usr/lib/x86_64-linux-gnu/libXfixes.so.3* || true
+      craftctl default
+      rm -f "$CRAFT_PRIME/usr/lib/libBLTlite"* || true
+      rm -f "$CRAFT_PRIME/usr/lib/x86_64-linux-gnu/libXfixes.so.3"* || true
