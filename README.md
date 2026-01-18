@@ -10,6 +10,8 @@ Given that image-based PDFs can become quite large, **CoverUP** offers two modes
 
 Whether you're dealing with a single page or an entire document, **CoverUP** provides a flexible and easy solution for all your PDF redaction needs.
 
+Support the project: [Buy me a pizza!](https://buymeacoffee.com/digidigital) 👍
+
 ---
 
 ![A screenshot of PDF redaction Software | Ein Screenshot der Software zum Schwärzen von PDF-Dokumenten](https://raw.githubusercontent.com/digidigital/CoverUP/main/Screenshots/CoverUP_screenshot.png)
