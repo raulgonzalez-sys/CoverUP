@@ -34,7 +34,7 @@ def get_worker_count(max_tasks=None):
     return workers
 
 
-SUPPORTED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png'}
+SUPPORTED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.tif', '.tiff'}
 
 
 def is_valid_file_type(filepath):
@@ -43,6 +43,61 @@ def is_valid_file_type(filepath):
         return False
     ext = os.path.splitext(filepath)[1].lower()
     return ext in SUPPORTED_EXTENSIONS
+
+
+_ALL_PAGES_KEYWORDS = {
+    '', '*', 'all', 'alla', 'alle', 'alle sider', 'todas', 'todas as', 'todo',
+    'tous', 'tout', 'tutte', 'tutti', 'tümü', 'wszystkie', 'все', '全部',
+    'όλες',
+}
+
+def parse_page_range(text, total_pages):
+    '''Parse a page-range string into a sorted list of 0-based page indices.
+
+Accepts an "all pages" keyword (e.g. 'all', 'todas', '*', or empty), or a
+comma-separated list of 1-based numbers and ranges such as '1-5, 8, 10-12'.
+Values outside 1..total_pages are ignored; reversed ranges (5-1) are
+normalised.
+
+Args:
+    text: The user input string (may be None).
+    total_pages: Total number of pages available.
+
+Returns:
+    list[int]: Sorted, de-duplicated 0-based page indices.
+'''
+    if total_pages <= 0:
+        return []
+    if text is None:
+        return list(range(total_pages))
+    cleaned = text.strip().lower()
+    if cleaned in _ALL_PAGES_KEYWORDS:
+        return list(range(total_pages))
+    pages = set()
+    for part in cleaned.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '-' in part:
+            low, _, high = part.partition('-')
+            try:
+                start, end = int(low), int(high)
+            except ValueError:
+                continue
+            if start > end:
+                start, end = end, start
+            for n in range(start, end + 1):
+                if 1 <= n <= total_pages:
+                    pages.add(n - 1)
+        else:
+            try:
+                n = int(part)
+            except ValueError:
+                continue
+            if 1 <= n <= total_pages:
+                pages.add(n - 1)
+    return sorted(pages)
+
 
 
 def get_package_dir():

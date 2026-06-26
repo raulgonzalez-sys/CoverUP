@@ -9,22 +9,9 @@ TRANSLATIONS = {
     'en': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
-        'about_text': '''CoverUP PDF {version}
-is free software licensed under the terms of the GPLv3.0
-
-Visit https://github.com/digidigital/CoverUP or https://coverup.digidigital.de for more information
-
-©2026 Björn Seipel -> support@digidigital.de
-
-OSS Libraries / modules used by this software:
-FreeSimpleGUI - https://github.com/spyoungtech/FreeSimpleGui
-AppDirs - https://github.com/ActiveState/appdirs
-pypdfium2 - https://github.com/pypdfium2-team/pypdfium2
-pyfpdf2 - https://py-pdf.github.io/fpdf2/
-Pillow - https://python-pillow.org/
-Material Symbols - https://fonts.google.com/icons''',
+        'about_text': 'CoverUP PDF {version}\nis free software licensed under the terms of the GPLv3.0\n\nVisit https://github.com/digidigital/CoverUP or https://coverup.digidigital.de for more information\n\n©2026 Björn Seipel -> support@digidigital.de\n\nOSS Libraries / modules used by this software:\nFreeSimpleGUI - https://github.com/spyoungtech/FreeSimpleGui\nAppDirs - https://github.com/ActiveState/appdirs\npypdfium2 - https://github.com/pypdfium2-team/pypdfium2\npyfpdf2 - https://py-pdf.github.io/fpdf2/\nPillow - https://python-pillow.org/\nMaterial Symbols - https://fonts.google.com/icons',
         'tooltip_open': 'Open file',
-        'tooltip_save': 'Save file',
+        'tooltip_save': 'Export PDF (choose pages)',
         'tooltip_export_page': 'Export current page',
         'tooltip_undo': 'Revert changes',
         'tooltip_eraser': 'Use eraser tool',
@@ -62,27 +49,40 @@ Material Symbols - https://fonts.google.com/icons''',
         'cli_version_help': 'Show version information and exit',
         'suffix_page': '_page',
         'suffix_redacted': '_redacted',
+        'tooltip_multipage': 'Multi-page mode: apply each new bar to several pages',
+        'tooltip_redact_single': 'Redact the current page only',
+        'tooltip_redact_all': 'Apply each new bar to all pages',
+        'tooltip_redact_ask': 'Ask which pages to apply each new bar to (Ctrl+M cycles)',
+        'redact_mode_status': 'Bars: {mode}',
+        'redact_mode_single': 'Current',
+        'redact_mode_all': 'All',
+        'redact_mode_ask': 'Page selection',
+        'redact_section': 'Redact on',
+        'export_target_title': 'Which pages do you want to export?',
+        'export_all': 'All pages ({total})',
+        'export_current': 'Current page ({page})',
+        'export_selection': 'Page selection',
+        'btn_ok': 'OK',
+        'btn_cancel': 'Cancel',
+        'label_erase_zone': 'Erase area',
+        'tooltip_redo': 'Redo',
+        'tooltip_pan': 'Hand tool: drag to move around the document',
+        'label_pan_tool': 'Hand (pan)',
+        'hint_pan': 'Right-drag: pan\nCtrl+wheel: zoom',
+        'tooltip_export_range': 'Export a range of pages',
+        'range_title': 'Select pages',
+        'range_prompt': "Apply to which pages? (1-{total})\nExamples: 'all', '1-5, 8', '3'",
+        'range_export_prompt': "Export which pages? (1-{total})\nExamples: 'all', '1-5, 8', '3'",
+        'range_all_keyword': 'all',
+        'error_no_pages_selected': 'No valid pages selected.',
+        'suffix_range': '_pages',
     },
-
     'de': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
-        'about_text': '''CoverUP PDF {version}
-ist freie Software, lizenziert unter den Bedingungen der GPLv3.0
-
-Besuchen Sie https://github.com/digidigital/CoverUP oder https://coverup.digidigital.de für weitere Informationen
-
-©2026 Björn Seipel -> support@digidigital.de
-
-Von dieser Software verwendete OSS-Bibliotheken:
-FreeSimpleGUI - https://github.com/spyoungtech/FreeSimpleGui
-AppDirs - https://github.com/ActiveState/appdirs
-pypdfium2 - https://github.com/pypdfium2-team/pypdfium2
-pyfpdf2 - https://py-pdf.github.io/fpdf2/
-Pillow - https://python-pillow.org/
-Material Symbols - https://fonts.google.com/icons''',
+        'about_text': 'CoverUP PDF {version}\nist freie Software, lizenziert unter den Bedingungen der GPLv3.0\n\nBesuchen Sie https://github.com/digidigital/CoverUP oder https://coverup.digidigital.de für weitere Informationen\n\n©2026 Björn Seipel -> support@digidigital.de\n\nVon dieser Software verwendete OSS-Bibliotheken:\nFreeSimpleGUI - https://github.com/spyoungtech/FreeSimpleGui\nAppDirs - https://github.com/ActiveState/appdirs\npypdfium2 - https://github.com/pypdfium2-team/pypdfium2\npyfpdf2 - https://py-pdf.github.io/fpdf2/\nPillow - https://python-pillow.org/\nMaterial Symbols - https://fonts.google.com/icons',
         'tooltip_open': 'Datei öffnen',
-        'tooltip_save': 'Datei speichern',
+        'tooltip_save': 'PDF exportieren (Seiten wählen)',
         'tooltip_export_page': 'Aktuelle Seite exportieren',
         'tooltip_undo': 'Änderungen rückgängig',
         'tooltip_eraser': 'Radierer verwenden',
@@ -120,13 +120,39 @@ Material Symbols - https://fonts.google.com/icons''',
         'cli_version_help': 'Versionsinformationen anzeigen und beenden',
         'suffix_page': '_Seite',
         'suffix_redacted': '_geschwärzt',
+        'tooltip_multipage': 'Mehrseitenmodus: jeden neuen Balken auf mehrere Seiten anwenden',
+        'tooltip_redact_single': 'Nur die aktuelle Seite schwärzen',
+        'tooltip_redact_all': 'Jeden neuen Balken auf alle Seiten anwenden',
+        'tooltip_redact_ask': 'Fragen, auf welche Seiten jeder neue Balken angewendet wird (Strg+M wechselt)',
+        'redact_mode_status': 'Balken: {mode}',
+        'redact_mode_single': 'Aktuell',
+        'redact_mode_all': 'Alle',
+        'redact_mode_ask': 'Seitenauswahl',
+        'redact_section': 'Schwärzen auf',
+        'export_target_title': 'Welche Seiten möchten Sie exportieren?',
+        'export_all': 'Alle Seiten ({total})',
+        'export_current': 'Aktuelle Seite ({page})',
+        'export_selection': 'Seitenauswahl',
+        'btn_ok': 'OK',
+        'btn_cancel': 'Abbrechen',
+        'label_erase_zone': 'Bereich löschen',
+        'tooltip_redo': 'Wiederholen',
+        'tooltip_pan': 'Hand-Werkzeug: ziehen, um sich im Dokument zu bewegen',
+        'label_pan_tool': 'Hand (ziehen)',
+        'hint_pan': 'Rechts ziehen: bewegen\nStrg+Rad: Zoom',
+        'tooltip_export_range': 'Einen Seitenbereich exportieren',
+        'range_title': 'Seiten auswählen',
+        'range_prompt': "Auf welche Seiten anwenden? (1-{total})\nBeispiele: 'alle', '1-5, 8', '3'",
+        'range_export_prompt': "Welche Seiten exportieren? (1-{total})\nBeispiele: 'alle', '1-5, 8', '3'",
+        'range_all_keyword': 'alle',
+        'error_no_pages_selected': 'Keine gültigen Seiten ausgewählt.',
+        'suffix_range': '_Seiten',
     },
-
     'es': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
         'tooltip_open': 'Abrir archivo',
-        'tooltip_save': 'Guardar archivo',
+        'tooltip_save': 'Exportar PDF (elegir páginas)',
         'tooltip_export_page': 'Exportar página actual',
         'tooltip_undo': 'Revertir cambios',
         'tooltip_eraser': 'Usar borrador',
@@ -164,8 +190,34 @@ Material Symbols - https://fonts.google.com/icons''',
         'cli_version_help': 'Mostrar información de versión y salir',
         'suffix_page': '_pagina',
         'suffix_redacted': '_redactado',
+        'tooltip_multipage': 'Modo multipágina: aplicar cada barra nueva a varias páginas',
+        'tooltip_redact_single': 'Censurar solo la página actual',
+        'tooltip_redact_all': 'Aplicar cada barra nueva a todas las páginas',
+        'tooltip_redact_ask': 'Preguntar a qué páginas aplicar cada barra nueva (Ctrl+M alterna)',
+        'redact_mode_status': 'Barras: {mode}',
+        'redact_mode_single': 'Actual',
+        'redact_mode_all': 'Todas',
+        'redact_mode_ask': 'Selección de páginas',
+        'redact_section': 'Censurar en',
+        'export_target_title': '¿Qué páginas quieres exportar?',
+        'export_all': 'Todas las páginas ({total})',
+        'export_current': 'Página actual ({page})',
+        'export_selection': 'Selección de páginas',
+        'btn_ok': 'Aceptar',
+        'btn_cancel': 'Cancelar',
+        'label_erase_zone': 'Borrar zona',
+        'tooltip_redo': 'Rehacer',
+        'tooltip_pan': 'Herramienta mano: arrastra para moverte por el documento',
+        'label_pan_tool': 'Mano (arrastrar)',
+        'hint_pan': 'Clic derecho: mover\nCtrl+rueda: zoom',
+        'tooltip_export_range': 'Exportar un rango de páginas',
+        'range_title': 'Seleccionar páginas',
+        'range_prompt': "¿A qué páginas aplicar? (1-{total})\nEjemplos: 'todas', '1-5, 8', '3'",
+        'range_export_prompt': "¿Qué páginas exportar? (1-{total})\nEjemplos: 'todas', '1-5, 8', '3'",
+        'range_all_keyword': 'todas',
+        'error_no_pages_selected': 'No se seleccionaron páginas válidas.',
+        'suffix_range': '_paginas',
     },
-
     'fr': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -204,12 +256,11 @@ Material Symbols - https://fonts.google.com/icons''',
         'save_success': '"{filename}" enregistré avec succès avec {count} page.',
         'save_success_plural': '"{filename}" enregistré avec succès avec {count} pages.',
         'cli_description': 'CoverUP PDF - Un outil pour caviarder des fichiers PDF et des images',
-        'cli_file_help': "Chemin vers un fichier PDF ou image (PDF, JPG, JPEG, PNG) à ouvrir au démarrage",
+        'cli_file_help': 'Chemin vers un fichier PDF ou image (PDF, JPG, JPEG, PNG) à ouvrir au démarrage',
         'cli_version_help': 'Afficher les informations de version et quitter',
         'suffix_page': '_page',
         'suffix_redacted': '_caviarde',
     },
-
     'it': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -253,7 +304,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_pagina',
         'suffix_redacted': '_oscurato',
     },
-
     'pt': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -297,7 +347,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_pagina',
         'suffix_redacted': '_redigido',
     },
-
     'ro': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -341,7 +390,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_pagina',
         'suffix_redacted': '_redactat',
     },
-
     'nl': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -378,14 +426,13 @@ Material Symbols - https://fonts.google.com/icons''',
         'confirm_delete_all': "Wilt u echt alle balken op alle pagina's verwijderen? Deze actie kan niet ongedaan worden gemaakt.",
         'confirm_restore_session': 'Het lijkt erop dat u al met dit bestand hebt gewerkt. Klik op "OK" om verder te gaan waar u gebleven was of op "Annuleren" om opnieuw te beginnen.',
         'save_success': '"{filename}" succesvol opgeslagen met {count} pagina.',
-        'save_success_plural': "{filename}\" succesvol opgeslagen met {count} pagina's.",
+        'save_success_plural': '{filename}" succesvol opgeslagen met {count} pagina\'s.',
         'cli_description': 'CoverUP PDF - Een hulpmiddel voor het redigeren van PDF-bestanden en afbeeldingen',
         'cli_file_help': 'Pad naar een PDF- of afbeeldingsbestand (PDF, JPG, JPEG, PNG) om te openen bij het opstarten',
         'cli_version_help': 'Versie-informatie tonen en afsluiten',
         'suffix_page': '_pagina',
         'suffix_redacted': '_geredigeerd',
     },
-
     'sv': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -429,7 +476,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_sida',
         'suffix_redacted': '_redigerad',
     },
-
     'da': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -473,7 +519,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_side',
         'suffix_redacted': '_redigeret',
     },
-
     'no': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -517,7 +562,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_side',
         'suffix_redacted': '_redigert',
     },
-
     'is': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -561,7 +605,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_sida',
         'suffix_redacted': '_afmad',
     },
-
     'pl': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -605,7 +648,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_strona',
         'suffix_redacted': '_zredagowany',
     },
-
     'cs': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -649,7 +691,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_strana',
         'suffix_redacted': '_redigovany',
     },
-
     'sk': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -693,7 +734,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_strana',
         'suffix_redacted': '_redigovany',
     },
-
     'bg': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -737,7 +777,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_stranica',
         'suffix_redacted': '_redigiran',
     },
-
     'sr': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -781,7 +820,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_stranica',
         'suffix_redacted': '_redigovan',
     },
-
     'hr': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -825,7 +863,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_stranica',
         'suffix_redacted': '_redigiran',
     },
-
     'sl': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -869,7 +906,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_stran',
         'suffix_redacted': '_redigiran',
     },
-
     'el': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -913,7 +949,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_selida',
         'suffix_redacted': '_epeksergasmeno',
     },
-
     'tr': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -941,7 +976,7 @@ Material Symbols - https://fonts.google.com/icons''',
         'error_unsupported_type': "Desteklenmeyen dosya türü: '{ext}'\nDesteklenen formatlar: PDF, JPG, JPEG, PNG",
         'error_pdf_open_failed': 'PDF dosyası açılamadı.',
         'error_incorrect_password': 'Yanlış şifre veya şifreli PDF açılamıyor.',
-        'error_password_required': 'Bu PDF\'i açmak için şifre gerekli.',
+        'error_password_required': "Bu PDF'i açmak için şifre gerekli.",
         'error_page_render_failed': 'Sayfa {page} işlenemedi: {error}',
         'error_page_process_failed': 'Sayfa {page} işlenemedi: {error}',
         'error_no_pages': 'İşlenecek sayfa yok',
@@ -957,7 +992,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_sayfa',
         'suffix_redacted': '_karartilmis',
     },
-
     'lt': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -1001,7 +1035,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_puslapis',
         'suffix_redacted': '_redaguotas',
     },
-
     'lv': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -1045,7 +1078,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_lapa',
         'suffix_redacted': '_redigeta',
     },
-
     'et': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -1089,7 +1121,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_lehekylg',
         'suffix_redacted': '_redigeeritud',
     },
-
     'zh': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
@@ -1133,7 +1164,6 @@ Material Symbols - https://fonts.google.com/icons''',
         'suffix_page': '_页',
         'suffix_redacted': '_已编辑',
     },
-
     'hi': {
         'app_title': 'CoverUP PDF',
         'app_title_with_file': 'CoverUP PDF - {filename}',
