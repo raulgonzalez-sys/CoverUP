@@ -113,7 +113,8 @@ class ImageContainer:
 
     zoom_factor = 100
 
-    def __init__(self, image, size=(0, 0), rectangles=None):
+    def __init__(self, image, size=(0, 0), rectangles=None,
+                 source_path=None, page_index=0, render_scale=1, password=None):
         """
         Initialize an ImageContainer.
 
@@ -121,6 +122,13 @@ class ImageContainer:
             image: PIL Image object for this page.
             size: Tuple of (height_pt, width_pt) for PDF dimensions.
             rectangles: Optional list of existing rectangles.
+            source_path: Path to the source document (PDF/image), used by the
+                automatic detection feature to read the digital text layer.
+            page_index: 0-based index of this page within the source document.
+            render_scale: Pixels-per-PDF-point used when this page was
+                rasterised (lets detection map text-layer points to image
+                pixels). 1 for imported images.
+            password: Password for the source PDF, if it was encrypted.
         """
         self.image = image
         self.size = size
@@ -128,6 +136,12 @@ class ImageContainer:
         self.width_in_pt = size[1]
         self.scaled_image = self.image
         self.id = None
+
+        # Provenance for automatic detection (digital text-layer lookup).
+        self.source_path = source_path
+        self.page_index = page_index
+        self.render_scale = render_scale
+        self.password = password
 
         # List of rectangles: [(start_coords, end_coords, color, graph_id), ...]
         self.rectangles = list() if rectangles is None else rectangles

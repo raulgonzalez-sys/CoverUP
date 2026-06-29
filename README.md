@@ -155,7 +155,7 @@ to each release — see `.github/workflows/`:
 | `linux-rpm.yml` | `.rpm` | `ubuntu-22.04` |
 | `linux-appimage.yml` | AppImage | `ubuntu-22.04` |
 
-Pushing a version tag (e.g. `0.5.0`) builds all of them; they can also be run
+Pushing a version tag (e.g. `0.8.0`) builds all of them; they can also be run
 manually from the Actions tab. The Linux jobs build on an older glibc for
 broader distribution compatibility.
 
@@ -163,9 +163,9 @@ The Linux packaging steps are reusable scripts that take the PyInstaller
 one-dir output (`pyinstaller --onedir --name coverup CoverUP.py`):
 
 ```bash
-packaging/build-deb.sh      0.5.0 dist/coverup dist-out   # requires fakeroot
-packaging/build-rpm.sh      0.5.0 dist/coverup dist-out   # requires fpm
-packaging/build-appimage.sh 0.5.0 dist/coverup dist-out   # requires appimagetool
+packaging/build-deb.sh      0.8.0 dist/coverup dist-out   # requires fakeroot
+packaging/build-rpm.sh      0.8.0 dist/coverup dist-out   # requires fpm
+packaging/build-appimage.sh 0.8.0 dist/coverup dist-out   # requires appimagetool
 ```
 
 ### Internationalization (i18n)

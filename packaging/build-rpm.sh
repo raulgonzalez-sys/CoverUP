@@ -6,11 +6,11 @@
 # icon under /usr/share so the app appears in the menu for all users.
 #
 # Usage: packaging/build-rpm.sh <version> <pyinstaller-dist-dir> [output-dir]
-#   e.g. packaging/build-rpm.sh 0.5.0 dist/coverup dist-rpm
+#   e.g. packaging/build-rpm.sh 0.8.0 dist/coverup dist-rpm
 # Requires: fpm (and rpmbuild) on PATH.
 set -euo pipefail
 
-VERSION="${1:?version required (e.g. 0.5.0)}"
+VERSION="${1:?version required (e.g. 0.8.0)}"
 DIST="${2:?PyInstaller dist/coverup dir required}"
 OUTDIR="${3:-.}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

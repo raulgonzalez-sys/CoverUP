@@ -8,6 +8,7 @@ Licensed under GPL-3.0
 """
 
 import gc
+import io
 import os
 import sys
 import shutil
@@ -23,6 +24,7 @@ from fpdf import FPDF
 from appdirs import user_data_dir
 
 from coverup import __version__
+from coverup import textsearch, ocr
 from coverup.image_container import ImageContainer, delete_all_rectangles, finalize_pages_chunked, close_all_pages
 from coverup.document_loader import load_document
 from coverup.workfile import WorkfileManager
@@ -196,14 +198,19 @@ def prompt_export_target(window, total_pages, current_page):
     """Radio dialog asking which pages to export.
 
     Mirrors the redaction-mode radial: 'All' (default), 'Current page' or a
-    'Page selection' (with a range field enabled only for that option).
+    'Page selection' (with a range field enabled only for that option). Also
+    offers an optional searchable-export checkbox (OCR text layer), disabled
+    with a hint when Tesseract is not installed.
 
     Returns:
-        list[int]: Sorted 0-based page indices, or None if the user cancelled.
-                   May be empty if a selection matched no valid pages.
+        tuple: ``(pages, make_searchable)`` where ``pages`` is a sorted list of
+        0-based page indices (possibly empty if a selection matched nothing),
+        or ``(None, False)`` if the user cancelled.
     """
     win_loc_x, win_loc_y = window.current_location()
     win_w, win_h = window.current_size_accurate()
+
+    ocr_ok = ocr.is_available()
 
     layout = [
         [sg.Text(_('export_target_title'))],
@@ -214,9 +221,15 @@ def prompt_export_target(window, total_pages, current_page):
         [sg.Radio(_('export_selection'), 'EXPGRP', key='-EXP_SEL-', enable_events=True),
          sg.Input('', size=(16, 1), key='-EXP_RANGE-', disabled=True,
                   tooltip=_('range_prompt', total=total_pages))],
-        [sg.Push(), sg.Button(_('btn_ok'), key='-EXP_OK-'),
-         sg.Button(_('btn_cancel'), key='-EXP_CANCEL-')]
+        [sg.HorizontalSeparator()],
+        [sg.Checkbox(_('exp_searchable'), key='-EXP_OCR-', default=False,
+                     disabled=not ocr_ok)],
     ]
+    if not ocr_ok:
+        layout.append([sg.Text(_('exp_searchable_na'), font=('Helvetica', 8),
+                               text_color='#B00020')])
+    layout.append([sg.Push(), sg.Button(_('btn_ok'), key='-EXP_OK-'),
+                   sg.Button(_('btn_cancel'), key='-EXP_CANCEL-')])
 
     dlg = sg.Window(
         _('export_target_title'),
@@ -227,28 +240,271 @@ def prompt_export_target(window, total_pages, current_page):
         location=(int(win_loc_x + win_w / 2 - 180), int(win_loc_y + win_h / 2 - 100))
     )
 
-    result = None
+    result = (None, False)
     while True:
         ev, vals = dlg.read()
         if ev in (sg.WINDOW_CLOSED, '-EXP_CANCEL-'):
-            result = None
+            result = (None, False)
             break
         elif ev in ('-EXP_ALL-', '-EXP_CURRENT-', '-EXP_SEL-'):
             dlg['-EXP_RANGE-'].update(disabled=not vals['-EXP_SEL-'])
         elif ev == '-EXP_OK-':
             if vals['-EXP_ALL-']:
-                result = list(range(total_pages))
+                pages = list(range(total_pages))
             elif vals['-EXP_CURRENT-']:
-                result = [current_page]
+                pages = [current_page]
             else:
-                result = parse_page_range(vals['-EXP_RANGE-'], total_pages)
+                pages = parse_page_range(vals['-EXP_RANGE-'], total_pages)
+            result = (pages, bool(vals.get('-EXP_OCR-')))
             break
 
     dlg.close()
     return result
 
 
-def export_pages_to_pdf(window, pages, save_file_path, output_quality, pointer_cursor, drawing_cursor):
+def detect_on_page(page, patterns, keywords, force_ocr, ocr_lang):
+    """Find sensitive-content rectangles on a single page.
+
+    Chooses the cheapest accurate source: the digital text layer (no extra
+    dependency) for PDF pages that actually carry text, falling back to OCR for
+    scanned PDFs, imported images, or when the user forces OCR.
+
+    Args:
+        page: The :class:`ImageContainer` to scan.
+        patterns: Iterable of keys from :data:`textsearch.PATTERN_DEFS`.
+        keywords: Iterable of literal keyword strings.
+        force_ocr: When True, skip the digital text layer and always OCR.
+        ocr_lang: Tesseract language string for the OCR path.
+
+    Returns:
+        list[tuple]: ``(start_xy, end_xy)`` rectangles in original-image pixel
+        coordinates, ready for :meth:`ImageContainer.add_rectangle`.
+    """
+    src = page.source_path
+    is_pdf = bool(src) and src.lower().endswith('.pdf')
+
+    if is_pdf and not force_ocr:
+        try:
+            if textsearch.page_has_text(src, page.page_index, page.password):
+                return textsearch.find_boxes_digital(
+                    src, page.page_index, page.render_scale, page.image.height,
+                    patterns=patterns, keywords=keywords, password=page.password
+                )
+        except Exception:
+            pass  # fall through to OCR
+
+    if ocr.is_available():
+        return ocr.find_boxes_ocr(page.image, patterns=patterns,
+                                  keywords=keywords, lang=ocr_lang)
+    return []
+
+
+def prompt_auto_redact(window, total_pages, current_page):
+    """Dialog to configure automatic detection of sensitive content.
+
+    Lets the user pick which built-in patterns to detect, add free-text
+    keywords, choose the page scope, and (when Tesseract is present) force OCR
+    and select the OCR language.
+
+    Returns:
+        dict | None: ``{'patterns', 'keywords', 'target', 'force_ocr',
+        'ocr_lang'}`` or ``None`` if cancelled. ``target`` is a sorted list of
+        0-based page indices.
+    """
+    win_loc_x, win_loc_y = window.current_location()
+    win_w, win_h = window.current_size_accurate()
+
+    ocr_ok = ocr.is_available()
+    ocr_langs = ocr.available_languages() or ['eng']
+    # The combo is single-select, so default to the single system-locale code
+    # (which is always in the list), not the combined 'xxx+eng' string.
+    default_lang = ocr.system_language()
+
+    pattern_rows = [
+        [sg.Checkbox(_('pat_' + key), key='-PAT_' + key + '-', default=True)]
+        for key in textsearch.available_patterns()
+    ]
+
+    layout = [
+        [sg.Text(_('auto_title'), font=('Helvetica', 11, 'bold'))],
+        [sg.Text(_('auto_detect_label'))],
+        *pattern_rows,
+        [sg.Text(_('auto_keywords_label'))],
+        [sg.Input('', size=(40, 1), key='-AUTO_KW-')],
+        [sg.HorizontalSeparator()],
+        [sg.Text(_('auto_scope_label'))],
+        [sg.Radio(_('export_all', total=total_pages), 'AUTOGRP', default=True,
+                  key='-AUTO_ALL-', enable_events=True)],
+        [sg.Radio(_('export_current', page=current_page + 1), 'AUTOGRP',
+                  key='-AUTO_CURRENT-', enable_events=True)],
+        [sg.Radio(_('export_selection'), 'AUTOGRP', key='-AUTO_SEL-', enable_events=True),
+         sg.Input('', size=(16, 1), key='-AUTO_RANGE-', disabled=True,
+                  tooltip=_('range_prompt', total=total_pages))],
+        [sg.HorizontalSeparator()],
+        [sg.Checkbox(_('auto_force_ocr'), key='-AUTO_OCR-', default=False,
+                     disabled=not ocr_ok),
+         sg.Text(_('auto_ocr_lang')),
+         sg.Combo(ocr_langs, default_value=default_lang, key='-AUTO_LANG-',
+                  readonly=True, size=(10, 1), disabled=not ocr_ok)],
+    ]
+    if not ocr_ok:
+        layout.append([sg.Text(_('auto_ocr_unavailable'), font=('Helvetica', 8),
+                               text_color='#B00020')])
+    layout.append([sg.Push(), sg.Button(_('btn_ok'), key='-AUTO_OK-'),
+                   sg.Button(_('btn_cancel'), key='-AUTO_CANCEL-')])
+
+    dlg = sg.Window(
+        _('auto_title'),
+        layout,
+        keep_on_top=True,
+        modal=True,
+        finalize=True,
+        location=(int(win_loc_x + win_w / 2 - 200), int(win_loc_y + win_h / 2 - 220))
+    )
+
+    result = None
+    while True:
+        ev, vals = dlg.read()
+        if ev in (sg.WINDOW_CLOSED, '-AUTO_CANCEL-'):
+            result = None
+            break
+        elif ev in ('-AUTO_ALL-', '-AUTO_CURRENT-', '-AUTO_SEL-'):
+            dlg['-AUTO_RANGE-'].update(disabled=not vals['-AUTO_SEL-'])
+        elif ev == '-AUTO_OK-':
+            patterns = [key for key in textsearch.available_patterns()
+                        if vals.get('-PAT_' + key + '-')]
+            keywords = [k.strip() for k in (vals.get('-AUTO_KW-') or '').split(',')
+                        if k.strip()]
+            if not patterns and not keywords:
+                sg.popup(_('auto_nothing_selected'), keep_on_top=True)
+                continue
+            if vals['-AUTO_ALL-']:
+                target = list(range(total_pages))
+            elif vals['-AUTO_CURRENT-']:
+                target = [current_page]
+            else:
+                target = parse_page_range(vals['-AUTO_RANGE-'], total_pages)
+            result = {
+                'patterns': patterns,
+                'keywords': keywords,
+                'target': target,
+                'force_ocr': bool(vals.get('-AUTO_OCR-')),
+                'ocr_lang': vals.get('-AUTO_LANG-') or default_lang,
+            }
+            break
+
+    dlg.close()
+    return result
+
+
+def prompt_metadata(window, metadata):
+    """Dialog to edit the metadata written into exported PDFs.
+
+    Args:
+        window: The GUI window (for centering).
+        metadata: Current metadata dict ('title', 'author', 'subject',
+            'stamp').
+
+    Returns:
+        dict | None: The updated metadata dict, or ``None`` if cancelled.
+    """
+    win_loc_x, win_loc_y = window.current_location()
+    win_w, win_h = window.current_size_accurate()
+
+    layout = [
+        [sg.Text(_('meta_title'), font=('Helvetica', 11, 'bold'))],
+        [sg.Text(_('meta_field_title'), size=(10, 1)),
+         sg.Input(metadata.get('title', ''), key='-META_TITLE-', size=(36, 1))],
+        [sg.Text(_('meta_field_author'), size=(10, 1)),
+         sg.Input(metadata.get('author', ''), key='-META_AUTHOR-', size=(36, 1))],
+        [sg.Text(_('meta_field_subject'), size=(10, 1)),
+         sg.Input(metadata.get('subject', ''), key='-META_SUBJECT-', size=(36, 1))],
+        [sg.Checkbox(_('meta_stamp'), key='-META_STAMP-',
+                     default=metadata.get('stamp', True))],
+        [sg.Push(), sg.Button(_('btn_ok'), key='-META_OK-'),
+         sg.Button(_('btn_cancel'), key='-META_CANCEL-')],
+    ]
+
+    dlg = sg.Window(
+        _('meta_title'),
+        layout,
+        keep_on_top=True,
+        modal=True,
+        finalize=True,
+        location=(int(win_loc_x + win_w / 2 - 200), int(win_loc_y + win_h / 2 - 120))
+    )
+
+    result = None
+    while True:
+        ev, vals = dlg.read()
+        if ev in (sg.WINDOW_CLOSED, '-META_CANCEL-'):
+            result = None
+            break
+        elif ev == '-META_OK-':
+            result = {
+                'title': vals['-META_TITLE-'].strip(),
+                'author': vals['-META_AUTHOR-'].strip(),
+                'subject': vals['-META_SUBJECT-'].strip(),
+                'stamp': bool(vals['-META_STAMP-']),
+            }
+            break
+
+    dlg.close()
+    return result
+
+
+def _add_searchable_layer(out_pdf, img_bytes, ocr_lang):
+    """Overlay an invisible OCR text layer on the current PDF page.
+
+    The image is OCR'd *after* redaction (it is the blacked-out raster that was
+    just placed on the page), so covered text is physically absent and cannot
+    re-enter the text layer. The recognised words are written in invisible text
+    mode, aligned to the placed image, making the exported PDF searchable and
+    selectable without changing its appearance.
+
+    Coordinates: the image is placed at (0, 0) spanning ``out_pdf.w``, so one
+    image pixel maps to ``out_pdf.w / image_width`` points. ``pdf.text`` draws
+    at the glyph *baseline*, hence ``top + height`` (not ``top``).
+
+    Args:
+        out_pdf: The FPDF instance, positioned on the page holding the image.
+        img_bytes: JPEG bytes of the finalized (redacted) page image.
+        ocr_lang: Tesseract language string (e.g. ``'spa+eng'``).
+    """
+    from PIL import Image
+    from fpdf.enums import TextMode
+
+    with io.BytesIO(img_bytes) as buf:
+        image = Image.open(buf)
+        image.load()
+    try:
+        words = ocr.ocr_words(image, lang=ocr_lang)
+        img_w, img_h = image.size
+    finally:
+        image.close()
+
+    if not words or not img_w:
+        return
+
+    pt_per_px = out_pdf.w / img_w
+    out_pdf.set_font('Helvetica', size=8)
+    with out_pdf.local_context(text_mode=TextMode.INVISIBLE):
+        for w in words:
+            size = max(1.0, w['height'] * pt_per_px)
+            x = w['left'] * pt_per_px
+            baseline_y = (w['top'] + w['height']) * pt_per_px
+            try:
+                out_pdf.set_font_size(size)
+                out_pdf.text(x, baseline_y, w['text'])
+            except Exception:
+                # A word Helvetica can't encode (OCR garble, non-latin script)
+                # shouldn't abort the whole page — just skip it.
+                continue
+
+
+def export_pages_to_pdf(window, pages, save_file_path, output_quality,
+                        pointer_cursor, drawing_cursor,
+                        make_searchable=False, ocr_lang=None, metadata=None):
     """Render the given pages with their redactions and write them to a PDF.
 
     Uses chunked parallel processing to limit memory use, and handles the
@@ -262,6 +518,11 @@ def export_pages_to_pdf(window, pages, save_file_path, output_quality, pointer_c
         output_quality: 'high' or 'low'.
         pointer_cursor: Cursor to restore on the window when done.
         drawing_cursor: Cursor to restore on the graph when done.
+        make_searchable: When True (and OCR is available), add an invisible OCR
+            text layer so the exported PDF is searchable.
+        ocr_lang: Tesseract language string for the searchable layer.
+        metadata: Optional dict with 'title', 'author', 'subject' and 'stamp'
+            (bool) controlling the document metadata written to the output.
 
     Returns:
         int: Number of pages written.
@@ -269,9 +530,25 @@ def export_pages_to_pdf(window, pages, save_file_path, output_quality, pointer_c
     Raises:
         Exception: Propagated from the export pipeline; caller shows the popup.
     """
+    metadata = metadata or {}
     out_pdf = FPDF(unit="pt")
-    out_pdf.set_creator(f'CoverUp PDF {__version__}')
+    # The creator tag is opt-in via metadata['stamp'] (default on) so privacy-
+    # minded users can omit the "CoverUP PDF" stamp entirely. fpdf2 also writes
+    # its own "/Producer (py-pdf/fpdf2 …)" tag by default, which would still
+    # reveal the tool — so clear it too when the stamp is turned off.
+    if metadata.get('stamp', True):
+        out_pdf.set_creator(f'CoverUp PDF {__version__}')
+    else:
+        out_pdf.set_producer('')
     out_pdf.set_creation_date(datetime.today())
+    if metadata.get('title'):
+        out_pdf.set_title(metadata['title'])
+    if metadata.get('author'):
+        out_pdf.set_author(metadata['author'])
+    if metadata.get('subject'):
+        out_pdf.set_subject(metadata['subject'])
+
+    searchable = make_searchable and ocr.is_available()
 
     window.set_cursor('watch')
     window['-GRAPH-'].set_cursor('watch')
@@ -302,6 +579,8 @@ def export_pages_to_pdf(window, pages, save_file_path, output_quality, pointer_c
         ):
             out_pdf.add_page(format=page_size)
             out_pdf.image(img_bytes, x=0, y=0, w=out_pdf.w)
+            if searchable:
+                _add_searchable_layer(out_pdf, img_bytes, ocr_lang)
             del img_bytes  # Release image bytes immediately after adding to PDF
             del page_size
 
@@ -448,6 +727,8 @@ def main():
     output_quality = 'high'
     edit_mode = 'draw'
     redact_mode = 'all'
+    # Metadata written into exported PDFs (configurable via the Metadata dialog).
+    pdf_metadata = {'title': '', 'author': '', 'subject': '', 'stamp': True}
     pointer_cursor = 'arrow' if sg.running_windows() else 'left_ptr'
     drawing_cursor = 'crosshair'
     image_bg_color = 'gray'
@@ -591,6 +872,52 @@ def main():
 
     pane_widget.bind('<ButtonRelease-1>', _remember_sidebar_fraction)
 
+    # --- Page thumbnails (sidebar navigator) ------------------------------
+    # FreeSimpleGUI has no way to clear a container, so thumbnail rows are
+    # created once via extend_layout and then reused: on each load we update
+    # the image/label of the slots we need and hide any surplus.
+    thumb_slots = []  # list of (img_key, txt_key, row_key)
+    thumb_bg = '#4d4d4d'
+
+    def make_thumb_data(pil_image, max_w=150, max_h=190):
+        thumb = pil_image.copy()
+        thumb.thumbnail((max_w, max_h))
+        with io.BytesIO() as b:
+            thumb.save(b, format='PNG')
+            return b.getvalue()
+
+    def rebuild_thumbnails():
+        """Populate the thumbnail strip for the currently loaded pages."""
+        needed = len(images)
+        for i in range(len(thumb_slots), needed):
+            ik, tk, rk = f'-THUMB_IMG_{i}-', f'-THUMB_TXT_{i}-', f'-THUMB_ROW_{i}-'
+            row = [sg.Column(
+                [[sg.Image(key=ik, enable_events=True, background_color=thumb_bg, pad=(0, 0))],
+                 [sg.Text('', key=tk, text_color='white', background_color=thumb_bg,
+                          font=('Helvetica', 8), pad=(0, (0, 6)))]],
+                key=rk, background_color=thumb_bg, element_justification='center',
+                pad=(2, 2))]
+            try:
+                window.extend_layout(window['-THUMBS-'], [row])
+            except Exception:
+                break
+            thumb_slots.append((ik, tk, rk))
+
+        for i, (ik, tk, rk) in enumerate(thumb_slots):
+            try:
+                if i < needed:
+                    window[ik].update(data=make_thumb_data(images[i].image), visible=True)
+                    window[tk].update(f'{i + 1}', visible=True)
+                    window[rk].update(visible=True)
+                else:
+                    window[rk].update(visible=False)
+            except Exception:
+                pass
+        try:
+            window['-THUMBS-'].contents_changed()
+        except Exception:
+            pass
+
     # Initialise the redaction mode indicator
     redact_mode = set_redact_mode(window, icons, redact_mode)
 
@@ -602,6 +929,7 @@ def main():
                 fill_color, output_quality, icons, pointer_cursor, drawing_cursor
             )
             first_load = False
+            rebuild_thumbnails()
         except Exception as e:
             window['-PAGE_TOTAL-'].update('0')
             window['-PROGRESS-'].update(current_count=0)
@@ -663,6 +991,13 @@ def main():
                 button_color='grey'
             )
 
+        elif event == 'METADATA':
+            updated = prompt_metadata(window, pdf_metadata)
+            if updated is not None:
+                pdf_metadata = updated
+                sg.popup_no_titlebar(_('meta_saved'), keep_on_top=True,
+                                     background_color='silver', button_color='grey')
+
         elif event == 'LOAD_PDF':
             workfile_manager.save(images, current_page, fill_color, output_quality)
 
@@ -692,6 +1027,7 @@ def main():
                         fill_color, output_quality, icons, pointer_cursor, drawing_cursor
                     )
                     first_load = False
+                    rebuild_thumbnails()
                 except Exception as e:
                     window['-PAGE_TOTAL-'].update('0')
                     window['-PROGRESS-'].update(current_count=0)
@@ -703,6 +1039,15 @@ def main():
                 try:
                     page = int(values['-PAGE_NUM-'])
                     current_page = flip_to_page(window, images, page - 1)
+                except ValueError:
+                    pass
+
+            elif isinstance(event, str) and event.startswith('-THUMB_IMG_'):
+                # Jump to the clicked page thumbnail.
+                try:
+                    pidx = int(event[len('-THUMB_IMG_'):-1])
+                    if 0 <= pidx < len(images):
+                        current_page = flip_to_page(window, images, pidx)
                 except ValueError:
                     pass
 
@@ -731,8 +1076,8 @@ def main():
                 images[current_page].redo(window)
 
             elif event == 'SAVE_PDF':
-                # Ask which pages to export
-                target = prompt_export_target(window, len(images), current_page)
+                # Ask which pages to export (and whether to make it searchable)
+                target, make_searchable = prompt_export_target(window, len(images), current_page)
                 if target is None:
                     continue
                 if not target:
@@ -762,7 +1107,10 @@ def main():
                     try:
                         total_pages = export_pages_to_pdf(
                             window, export_pages, save_file_path,
-                            output_quality, pointer_cursor, drawing_cursor
+                            output_quality, pointer_cursor, drawing_cursor,
+                            make_searchable=make_searchable,
+                            ocr_lang=ocr.default_language(),
+                            metadata=pdf_metadata
                         )
 
                         workfile_manager.save(images, current_page, fill_color, output_quality)
@@ -784,6 +1132,59 @@ def main():
                     except Exception as e:
                         window['-PROGRESS-'].update(current_count=0)
                         sg.popup(_('error_occurred'), str(e))
+
+            elif event == 'AUTO_REDACT':
+                cfg = prompt_auto_redact(window, len(images), current_page)
+                if cfg is None:
+                    continue
+                target = cfg['target']
+                if not target:
+                    sg.popup(_('error_no_pages_selected'), keep_on_top=True)
+                    continue
+
+                win_loc_x, win_loc_y = window.current_location()
+                win_w, win_h = window.current_size_accurate()
+                center = (int(win_loc_x + win_w / 2 - 185), int(win_loc_y + win_h / 2 - 200))
+
+                window.set_cursor('watch')
+                window['-GRAPH-'].set_cursor('watch')
+                total_added = 0
+                pages_hit = 0
+                try:
+                    for idx, p in enumerate(target):
+                        window['-PROGRESS-'].update(current_count=int((idx + 1) * 100 / len(target)))
+                        window.refresh()
+                        boxes = detect_on_page(
+                            images[p], cfg['patterns'], cfg['keywords'],
+                            cfg['force_ocr'], cfg['ocr_lang']
+                        )
+                        if boxes:
+                            pages_hit += 1
+                        for start_xy, end_xy in boxes:
+                            images[p].add_rectangle(start_xy, end_xy, fill_color)
+                            total_added += 1
+                except Exception as e:
+                    sg.popup(_('error_occurred'), str(e), keep_on_top=True)
+                finally:
+                    window['-PROGRESS-'].update(current_count=0)
+                    window.set_cursor(pointer_cursor)
+                    window['-GRAPH-'].set_cursor(drawing_cursor)
+
+                # Redraw the current page so any new bars on it become visible.
+                current_page = flip_to_page(window, images, current_page)
+
+                if total_added:
+                    workfile_manager.save(images, current_page, fill_color, output_quality)
+                    sg.popup_no_titlebar(
+                        _plural('auto_done', 'auto_done_plural', total_added, pages=pages_hit),
+                        location=center, keep_on_top=True,
+                        background_color='silver', button_color='grey'
+                    )
+                else:
+                    sg.popup_no_titlebar(
+                        _('auto_none'), location=center, keep_on_top=True,
+                        background_color='silver', button_color='grey'
+                    )
 
             # Draw on Graph
             elif event == '-GRAPH-' and edit_mode == 'draw':

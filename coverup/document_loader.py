@@ -160,7 +160,11 @@ def load_document(load_file_path, import_ppi, window, workfile_manager, show_res
                         pil_image = Image.open(img_buffer)
                         pil_image.load()
                         img_buffer.close()
-                        results[page_idx] = ImageContainer(pil_image, page_size)
+                        results[page_idx] = ImageContainer(
+                            pil_image, page_size,
+                            source_path=load_file_path, page_index=page_idx,
+                            render_scale=scale, password=pdf_password
+                        )
                         del image_bytes
                         del result
                         completed += 1
@@ -210,7 +214,10 @@ def load_document(load_file_path, import_ppi, window, workfile_manager, show_res
 
         width_ppi = int(width / import_ppi * 72)
         height_ppi = int(height / import_ppi * 72)
-        images_list.append(ImageContainer(new_image, (width_ppi, height_ppi)))
+        images_list.append(ImageContainer(
+            new_image, (width_ppi, height_ppi),
+            source_path=load_file_path, page_index=0, render_scale=1
+        ))
 
     workfile_manager.set_file_path(load_file_path)
     work_data = workfile_manager.load()

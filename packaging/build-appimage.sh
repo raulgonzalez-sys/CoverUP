@@ -6,12 +6,12 @@
 # into the application menu by itself (use the .deb for system-wide install).
 #
 # Usage: packaging/build-appimage.sh <version> <pyinstaller-dist-dir> [output-dir]
-#   e.g. packaging/build-appimage.sh 0.5.0 dist/coverup dist-appimage
+#   e.g. packaging/build-appimage.sh 0.8.0 dist/coverup dist-appimage
 # Env:
 #   APPIMAGETOOL   path to appimagetool (default: "appimagetool" on PATH)
 set -euo pipefail
 
-VERSION="${1:?version required (e.g. 0.5.0)}"
+VERSION="${1:?version required (e.g. 0.8.0)}"
 DIST="${2:?PyInstaller dist/coverup dir required}"
 OUTDIR="${3:-.}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

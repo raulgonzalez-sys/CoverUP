@@ -5,16 +5,16 @@ name: Linux .rpm
 # glibc) so the bundle works across a wide range of RPM distros.
 #
 # Triggers:
-#   - Pushing a version tag (e.g. 0.5.0) builds and attaches to that release.
+#   - Pushing a version tag (e.g. 0.8.0) builds and attaches to that release.
 #   - Manual run (workflow_dispatch) lets you target an existing tag.
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to attach the .rpm to (e.g. 0.5.0)"
+        description: "Release tag to attach the .rpm to (e.g. 0.8.0)"
         required: true
-        default: "0.5.0"
+        default: "0.8.0"
   push:
     tags:
       - "*"

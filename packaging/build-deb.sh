@@ -10,10 +10,10 @@
 #   /usr/share/icons/hicolor/scalable/apps/coverup.svg
 #
 # Usage: packaging/build-deb.sh <version> <pyinstaller-dist-dir> [output-dir]
-#   e.g. packaging/build-deb.sh 0.5.0 dist/coverup dist-deb
+#   e.g. packaging/build-deb.sh 0.8.0 dist/coverup dist-deb
 set -euo pipefail
 
-VERSION="${1:?version required (e.g. 0.5.0)}"
+VERSION="${1:?version required (e.g. 0.8.0)}"
 DIST="${2:?PyInstaller dist/coverup dir required}"
 OUTDIR="${3:-.}"
 ARCH="$(dpkg --print-architecture)"
