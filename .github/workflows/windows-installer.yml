@@ -45,6 +45,29 @@ jobs:
           pyinstaller --noconfirm --onedir --windowed
           --name CoverUP --icon CoverUP.ico CoverUP.py
 
+      - name: Bundle Tesseract OCR into the app
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          $src = "C:\Program Files\Tesseract-OCR"
+          if (-not (Test-Path "$src\tesseract.exe")) {
+            $found = Get-ChildItem -Path "C:\Program Files","C:\Program Files (x86)","C:\ProgramData\chocolatey" -Recurse -Filter tesseract.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $src = $found.DirectoryName }
+          }
+          if (-not (Test-Path "$src\tesseract.exe")) { throw "tesseract.exe not found after choco install" }
+          Write-Host "Tesseract found at $src"
+          $dst = "dist\CoverUP\_internal\tesseract"
+          New-Item -ItemType Directory -Force -Path $dst, "dist\CoverUP\_internal\tessdata" | Out-Null
+          # Copy the whole program dir: tesseract.exe plus the DLLs it resolves
+          # from its own folder on Windows.
+          Copy-Item "$src\*" $dst -Recurse -Force
+          # Ensure the base English model sits at our tessdata convention.
+          $eng = Get-ChildItem -Path $src -Recurse -Filter eng.traineddata -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $eng) { throw "eng.traineddata not found in tesseract install" }
+          Copy-Item $eng.FullName "dist\CoverUP\_internal\tessdata\eng.traineddata" -Force
+          Write-Host "Smoke test:"
+          & "$dst\tesseract.exe" --version
+
       - name: Resolve version tag
         id: ver
         shell: bash

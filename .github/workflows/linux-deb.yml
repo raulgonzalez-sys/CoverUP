@@ -49,6 +49,16 @@ jobs:
       - name: Build executable (PyInstaller)
         run: pyinstaller --noconfirm --onedir --name coverup CoverUP.py
 
+      - name: Bundle Tesseract OCR into the app
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+          bash packaging/bundle-tesseract.sh dist/coverup eng
+          echo "Smoke test (scrubbed env):"
+          env -u LD_LIBRARY_PATH dist/coverup/_internal/tesseract/tesseract --version
+          env -u LD_LIBRARY_PATH dist/coverup/_internal/tesseract/tesseract \
+            --tessdata-dir dist/coverup/_internal/tessdata --list-langs
+
       - name: Resolve version tag
         id: ver
         run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"

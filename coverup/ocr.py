@@ -60,19 +60,76 @@ LOCALE_TO_TESSERACT = {
 # Cache the availability/version probe so we don't shell out on every call.
 _AVAILABLE = None
 _USER_TESSDATA = None
+_CONFIGURED = False
+
+
+def _bundle_root():
+    """Return the bundle directory holding shipped ``tesseract``/``tessdata``.
+
+    Mirrors :func:`coverup.utils.get_resource_root`: in a PyInstaller build the
+    data lives under ``_MEIPASS`` (== ``_internal`` for onedir) or next to the
+    executable. Returns the first directory that contains a ``tesseract``
+    subfolder, or ``None`` when running from source.
+    """
+    candidates = []
+    if hasattr(sys, '_MEIPASS'):
+        candidates.append(sys._MEIPASS)
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, '_internal'))
+        candidates.append(exe_dir)
+    for c in candidates:
+        if c and os.path.isdir(os.path.join(c, 'tesseract')):
+            return c
+    return None
+
+
+def _bundled_tesseract_cmd():
+    """Return the path to a bundled tesseract executable, or ``None``.
+
+    On Linux this is a small wrapper script (it sets ``LD_LIBRARY_PATH`` to the
+    bundled ``lib`` dir before exec'ing the real binary, so the app's own
+    environment and its multiprocessing workers are never touched). On Windows
+    it is ``tesseract.exe`` with its DLLs alongside.
+    """
+    root = _bundle_root()
+    if not root:
+        return None
+    tdir = os.path.join(root, 'tesseract')
+    for name in ('tesseract', 'tesseract.exe'):
+        p = os.path.join(tdir, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _configure_tesseract():
+    """Point pytesseract at the bundled binary when running from a build."""
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+    _CONFIGURED = True
+    cmd = _bundled_tesseract_cmd()
+    if cmd:
+        try:
+            import pytesseract
+            pytesseract.pytesseract.tesseract_cmd = cmd
+        except Exception:
+            pass
 
 
 def is_available():
-    """Return True if Tesseract OCR is usable on this system.
+    """Return True if Tesseract OCR is usable.
 
-    Checks both that the ``tesseract`` binary is on PATH and that the
-    ``pytesseract`` wrapper can talk to it. The result is cached.
+    Prefers a tesseract bundled with the build (so installers work out of the
+    box); otherwise falls back to one on PATH. The result is cached.
     """
     global _AVAILABLE
     if _AVAILABLE is not None:
         return _AVAILABLE
     _AVAILABLE = False
-    if shutil.which('tesseract'):
+    _configure_tesseract()
+    if _bundled_tesseract_cmd() or shutil.which('tesseract'):
         try:
             import pytesseract
             pytesseract.get_tesseract_version()
@@ -112,7 +169,9 @@ def _source_tessdata_dirs():
     if hasattr(sys, '_MEIPASS'):
         dirs.append(os.path.join(sys._MEIPASS, 'tessdata'))
     if getattr(sys, 'frozen', False):
-        dirs.append(os.path.join(os.path.dirname(sys.executable), 'tessdata'))
+        exe_dir = os.path.dirname(sys.executable)
+        dirs.append(os.path.join(exe_dir, 'tessdata'))
+        dirs.append(os.path.join(exe_dir, '_internal', 'tessdata'))
     # Explicit override.
     if os.environ.get('TESSDATA_PREFIX'):
         dirs.append(os.environ['TESSDATA_PREFIX'])
