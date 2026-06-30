@@ -22,11 +22,15 @@ Visit the [CoverUP PDF Microsite](https://coverup.digidigital.de) - This softwar
 
 ## Features
 
+- **Automatic detection & redaction** of sensitive data — emails, Spanish DNI/NIE/CIF, IBAN/bank accounts, card and phone numbers, postal addresses, plus your own keywords
+- **Built-in OCR** for scanned PDFs and images (bundled Tesseract; English included, other languages downloaded on demand) with selectable *Fast* / *Accurate* quality
 - Import PDF, PNG, JPG, and TIFF files
 - Draw black or white redaction bars over sensitive content
-- **Redaction modes** - apply a bar to all pages, the current page only, or a selected page range
+- **Redaction modes** - apply a bar to the current page (default), all pages, or a selected page range
+- **Page thumbnails** sidebar for quick navigation
 - Password-protected PDF support
 - High-quality and compressed export modes
+- Exported PDFs carry **no document metadata** (no title/author/creator/producer)
 - Session persistence - continue where you left off
 - Undo and redo for corrections
 - Zoom in/out and panning for precise redaction
