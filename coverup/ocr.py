@@ -28,6 +28,7 @@ Two features build on this module:
 """
 
 import os
+import json
 import sys
 import glob
 import shutil
@@ -40,10 +41,16 @@ from coverup.i18n import get_system_locale
 # Base language always made available; others are fetched on demand.
 BASE_LANGUAGE = 'eng'
 
-# Where single language files are fetched from when missing locally. The
-# ``fast`` models are ~1/3 the size of the standard ones with negligible
-# accuracy loss for this use case.
-TESSDATA_BASE_URL = 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/{code}.traineddata'
+# Selectable model quality. We use the LSTM engine, so the two meaningful
+# choices are the small integer models ("fast", the default — light downloads,
+# great on clean text) and the float models ("best" — ~3-6x larger, more robust
+# on poor scans). The legacy "tessdata" repo is intentionally not offered: it
+# bundles the legacy engine we never use, so it is pure overhead.
+TESSDATA_MODELS = {
+    'fast': 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/{code}.traineddata',
+    'best': 'https://github.com/tesseract-ocr/tessdata_best/raw/main/{code}.traineddata',
+}
+DEFAULT_OCR_MODEL = 'fast'
 _DOWNLOAD_TIMEOUT = 30
 
 # Map a CoverUP UI/system locale (2-letter) to a Tesseract language code.
@@ -59,8 +66,61 @@ LOCALE_TO_TESSERACT = {
 
 # Cache the availability/version probe so we don't shell out on every call.
 _AVAILABLE = None
-_USER_TESSDATA = None
 _CONFIGURED = False
+_OCR_MODEL = None
+
+
+def _data_root():
+    """Return CoverUP's user data directory (parent of config and tessdata)."""
+    try:
+        from appdirs import user_data_dir
+        base = user_data_dir('CoverUP', 'digidigital')
+    except Exception:
+        base = os.path.join(os.path.expanduser('~'), '.coverup')
+    try:
+        os.makedirs(base, exist_ok=True)
+    except Exception:
+        pass
+    return base
+
+
+def _config_path():
+    return os.path.join(_data_root(), 'config.json')
+
+
+def get_ocr_model():
+    """Return the selected OCR model variant ('fast' or 'best'). Cached."""
+    global _OCR_MODEL
+    if _OCR_MODEL is not None:
+        return _OCR_MODEL
+    model = DEFAULT_OCR_MODEL
+    try:
+        with open(_config_path(), encoding='utf-8') as fh:
+            model = json.load(fh).get('ocr_model', DEFAULT_OCR_MODEL)
+    except Exception:
+        pass
+    _OCR_MODEL = model if model in TESSDATA_MODELS else DEFAULT_OCR_MODEL
+    return _OCR_MODEL
+
+
+def set_ocr_model(model):
+    """Persist the OCR model variant choice. No-op for an unknown value."""
+    global _OCR_MODEL
+    if model not in TESSDATA_MODELS:
+        return
+    _OCR_MODEL = model
+    cfg = {}
+    try:
+        with open(_config_path(), encoding='utf-8') as fh:
+            cfg = json.load(fh)
+    except Exception:
+        cfg = {}
+    cfg['ocr_model'] = model
+    try:
+        with open(_config_path(), 'w', encoding='utf-8') as fh:
+            json.dump(cfg, fh)
+    except Exception:
+        pass
 
 
 def _bundle_root():
@@ -140,21 +200,17 @@ def is_available():
 
 
 def user_tessdata_dir():
-    """Return (creating if needed) CoverUP's own writable tessdata directory."""
-    global _USER_TESSDATA
-    if _USER_TESSDATA is not None:
-        return _USER_TESSDATA
-    try:
-        from appdirs import user_data_dir
-        base = user_data_dir('CoverUP', 'digidigital')
-    except Exception:
-        base = os.path.join(os.path.expanduser('~'), '.coverup')
-    path = os.path.join(base, 'tessdata')
+    """Return (creating if needed) CoverUP's writable tessdata dir.
+
+    The directory is per-model (``tessdata/fast`` / ``tessdata/best``), so
+    switching quality just points Tesseract at a different folder and each
+    variant's models are downloaded and cached independently.
+    """
+    path = os.path.join(_data_root(), 'tessdata', get_ocr_model())
     try:
         os.makedirs(path, exist_ok=True)
     except Exception:
         pass
-    _USER_TESSDATA = path
     return path
 
 
@@ -198,12 +254,54 @@ def _langs_in_dir(directory):
             for p in glob.glob(os.path.join(directory, '*.traineddata'))}
 
 
-def ensure_language(code):
-    """Make a single language available in CoverUP's tessdata directory.
+def _copy_from_sources(code, target, userdir):
+    """Copy ``code``'s model from a system/bundle dir into target. Bool result."""
+    for src in _source_tessdata_dirs():
+        if os.path.realpath(src) == os.path.realpath(userdir):
+            continue
+        candidate = os.path.join(src, f'{code}.traineddata')
+        if os.path.isfile(candidate):
+            try:
+                shutil.copyfile(candidate, target)
+                return True
+            except Exception:
+                pass
+    return False
 
-    Resolution order: already present → copy from a system/bundle directory →
-    download from ``tessdata_fast``. Downloads are written atomically so a
-    partial transfer never leaves a corrupt model behind.
+
+def _download_model(code, target, userdir):
+    """Download ``code``'s model for the active variant into target, atomically."""
+    url = TESSDATA_MODELS[get_ocr_model()].format(code=code)
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=userdir, suffix='.part')
+        os.close(fd)
+        with urllib.request.urlopen(url, timeout=_DOWNLOAD_TIMEOUT) as resp:
+            data = resp.read()
+        if not data:
+            os.remove(tmp)
+            return False
+        with open(tmp, 'wb') as fh:
+            fh.write(data)
+        os.replace(tmp, target)  # atomic
+        return True
+    except Exception:
+        try:
+            if tmp and os.path.isfile(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+        return False
+
+
+def ensure_language(code):
+    """Make a single language available in the active model's tessdata dir.
+
+    For the ``fast`` variant, a model already on the machine (bundle/system) is
+    reused before downloading. For ``best``, the high-accuracy model is
+    downloaded first — copying the system model (which is fast-grade) would
+    defeat the choice — with the local copy kept only as an offline fallback.
+    Downloads are atomic, so a partial transfer never leaves a corrupt model.
 
     Args:
         code: A Tesseract language code (e.g. ``'spa'``, ``'chi_sim'``).
@@ -219,39 +317,9 @@ def ensure_language(code):
     if os.path.isfile(target):
         return True
 
-    # Reuse a copy already on the machine (bundle or system) before downloading.
-    for src in _source_tessdata_dirs():
-        if os.path.realpath(src) == os.path.realpath(userdir):
-            continue
-        candidate = os.path.join(src, f'{code}.traineddata')
-        if os.path.isfile(candidate):
-            try:
-                shutil.copyfile(candidate, target)
-                return True
-            except Exception:
-                pass  # fall through to download
-
-    # Download the single model file.
-    url = TESSDATA_BASE_URL.format(code=code)
-    try:
-        fd, tmp = tempfile.mkstemp(dir=userdir, suffix='.part')
-        os.close(fd)
-        with urllib.request.urlopen(url, timeout=_DOWNLOAD_TIMEOUT) as resp:
-            data = resp.read()
-        if not data:
-            os.remove(tmp)
-            return False
-        with open(tmp, 'wb') as fh:
-            fh.write(data)
-        os.replace(tmp, target)  # atomic
-        return True
-    except Exception:
-        try:
-            if os.path.isfile(tmp):
-                os.remove(tmp)
-        except Exception:
-            pass
-        return False
+    if get_ocr_model() == 'best':
+        return _download_model(code, target, userdir) or _copy_from_sources(code, target, userdir)
+    return _copy_from_sources(code, target, userdir) or _download_model(code, target, userdir)
 
 
 def ensure_languages(lang):

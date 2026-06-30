@@ -306,6 +306,10 @@ def prompt_auto_redact(window, total_pages, current_page):
     # The combo is single-select, so default to the single system-locale code
     # (which is always in the list), not the combined 'xxx+eng' string.
     default_lang = ocr.system_language()
+    # OCR model quality, shown with friendly labels mapped back to codes.
+    model_display = {'fast': _('ocr_model_fast'), 'best': _('ocr_model_best')}
+    model_codes = {v: k for k, v in model_display.items()}
+    cur_model = ocr.get_ocr_model()
 
     pattern_rows = [
         [sg.Checkbox(_('pat_' + key), key='-PAT_' + key + '-', default=True)]
@@ -333,6 +337,9 @@ def prompt_auto_redact(window, total_pages, current_page):
          sg.Text(_('auto_ocr_lang')),
          sg.Combo(ocr_langs, default_value=default_lang, key='-AUTO_LANG-',
                   readonly=True, size=(10, 1), disabled=not ocr_ok)],
+        [sg.Text(_('ocr_model_label')),
+         sg.Combo(list(model_display.values()), default_value=model_display[cur_model],
+                  key='-AUTO_MODEL-', readonly=True, size=(20, 1), disabled=not ocr_ok)],
     ]
     if not ocr_ok:
         layout.append([sg.Text(_('auto_ocr_unavailable'), font=('Helvetica', 8),
@@ -365,6 +372,8 @@ def prompt_auto_redact(window, total_pages, current_page):
             if not patterns and not keywords:
                 sg.popup(_('auto_nothing_selected'), keep_on_top=True)
                 continue
+            # Persist the chosen OCR model quality for future downloads.
+            ocr.set_ocr_model(model_codes.get(vals.get('-AUTO_MODEL-'), cur_model))
             if vals['-AUTO_ALL-']:
                 target = list(range(total_pages))
             elif vals['-AUTO_CURRENT-']:
