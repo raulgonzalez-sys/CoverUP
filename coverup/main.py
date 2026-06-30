@@ -837,7 +837,7 @@ def main():
 
     first_load = True
     history_length = 30
-    import_ppi = 200
+    import_ppi = 216
     images = []
     file_path = None
     fill_color = 'black'
