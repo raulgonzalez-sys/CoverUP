@@ -14,6 +14,7 @@ import sys
 import shutil
 import argparse
 import subprocess
+import threading
 import tkinter as tk
 from pathlib import Path
 from multiprocessing import freeze_support
@@ -286,12 +287,141 @@ def detect_on_page(page, patterns, keywords, force_ocr, ocr_lang):
     return []
 
 
+def prompt_download_languages(parent_window, model):
+    """Dialog to download additional Tesseract language models.
+
+    Shows checkboxes for every language in ALL_TESSERACT_LANGUAGE_NAMES that is
+    not yet downloaded for *model*.  The user can select one or more and click
+    Download; each language is fetched sequentially with a live progress bar.
+
+    Args:
+        parent_window: The calling sg.Window, used to centre this dialog.
+        model: OCR model variant (``'fast'`` or ``'best'``).
+
+    Returns:
+        bool: True if at least one language was successfully downloaded.
+    """
+    from coverup.i18n import _
+
+    win_loc_x, win_loc_y = parent_window.current_location()
+    win_w, win_h = parent_window.current_size_accurate()
+
+    # Build the list of languages not yet present for this model.
+    not_downloaded = [
+        code for code in sorted(ocr.ALL_TESSERACT_LANGUAGE_NAMES)
+        if not ocr.is_language_downloaded(code, model)
+    ]
+
+    if not_downloaded:
+        display_names = [
+            f"{ocr.ALL_TESSERACT_LANGUAGE_NAMES[c]} ({c})"
+            for c in not_downloaded
+        ]
+        checkboxes = [
+            [sg.Checkbox(display_names[i], key=f'-DLANG_{not_downloaded[i]}-',
+                         default=False)]
+            for i in range(len(not_downloaded))
+        ]
+        lang_col = sg.Column(checkboxes, scrollable=True,
+                             vertical_scroll_only=True,
+                             size=(380, 260), key='-DLANG_SCROLL-')
+        lang_section = [[lang_col]]
+    else:
+        lang_section = [[sg.Text(_('dlang_all_downloaded'))]]
+
+    layout = [
+        [sg.Text(_('dlang_title'), font=('Helvetica', 11, 'bold'))],
+        [sg.Text(_('dlang_subtitle', model=model))],
+        *lang_section,
+        [sg.Text('', key='-DLANG_STATUS-', size=(46, 1))],
+        [sg.ProgressBar(100, orientation='h', size=(46, 12),
+                        key='-DLANG_BAR-', visible=False,
+                        bar_color=('green', 'white'), expand_x=True)],
+        [sg.Push(),
+         sg.Button(_('btn_download'), key='-DLANG_DL-',
+                   disabled=not not_downloaded),
+         sg.Button(_('btn_close'), key='-DLANG_CLOSE-')],
+    ]
+
+    dlg = sg.Window(
+        _('dlang_title'),
+        layout,
+        keep_on_top=True,
+        modal=True,
+        finalize=True,
+        location=(int(win_loc_x + win_w / 2 - 220),
+                  int(win_loc_y + win_h / 2 - 230)),
+    )
+
+    newly_downloaded = False
+    codes_to_dl = []
+    current_dl_idx = [0]
+    dl_cancel = threading.Event()
+
+    def _launch_next(idx):
+        if idx >= len(codes_to_dl):
+            dlg['-DLANG_BAR-'].update(visible=False)
+            dlg['-DLANG_STATUS-'].update(_('dlang_done'))
+            dlg['-DLANG_DL-'].update(disabled=False)
+            return
+        code = codes_to_dl[idx]
+        dlg['-DLANG_STATUS-'].update(
+            _('dlang_downloading',
+              current=idx + 1, total=len(codes_to_dl), lang=code))
+        dlg['-DLANG_BAR-'].update(current_count=0, visible=True)
+
+        def _worker(c=code):
+            def _cb(pct):
+                dlg.write_event_value('-DLANG_DL_PROGRESS-', pct)
+            ok = ocr.ensure_language_for_model(c, model, _cb, dl_cancel)
+            dlg.write_event_value('-DLANG_DL_DONE-', (ok, c))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    while True:
+        ev, vals = dlg.read(timeout=100)
+
+        if ev in (sg.WINDOW_CLOSED, '-DLANG_CLOSE-'):
+            dl_cancel.set()
+            break
+
+        elif ev == sg.TIMEOUT_EVENT:
+            pass
+
+        elif ev == '-DLANG_DL_PROGRESS-':
+            dlg['-DLANG_BAR-'].update(current_count=vals['-DLANG_DL_PROGRESS-'])
+
+        elif ev == '-DLANG_DL_DONE-':
+            ok, code = vals['-DLANG_DL_DONE-']
+            if ok:
+                newly_downloaded = True
+            current_dl_idx[0] += 1
+            _launch_next(current_dl_idx[0])
+
+        elif ev == '-DLANG_DL-':
+            selected = [c for c in not_downloaded
+                        if vals.get(f'-DLANG_{c}-')]
+            if not selected:
+                dlg['-DLANG_STATUS-'].update(_('dlang_none_selected'))
+                continue
+            codes_to_dl[:] = selected
+            current_dl_idx[0] = 0
+            dl_cancel.clear()
+            dlg['-DLANG_DL-'].update(disabled=True)
+            _launch_next(0)
+
+    dlg.close()
+    return newly_downloaded
+
+
 def prompt_auto_redact(window, total_pages, current_page):
     """Dialog to configure automatic detection of sensitive content.
 
     Lets the user pick which built-in patterns to detect, add free-text
     keywords, choose the page scope, and (when Tesseract is present) force OCR
-    and select the OCR language.
+    and select the OCR language.  When the "best" model is selected and the
+    chosen language is not yet downloaded, the dialog fetches it in the
+    background with a live progress bar and keeps OK disabled until done.
 
     Returns:
         dict | None: ``{'patterns', 'keywords', 'target', 'force_ocr',
@@ -310,6 +440,9 @@ def prompt_auto_redact(window, total_pages, current_page):
     model_display = {'fast': _('ocr_model_fast'), 'best': _('ocr_model_best')}
     model_codes = {v: k for k, v in model_display.items()}
     cur_model = ocr.get_ocr_model()
+
+    _MORE_LANGS = _('ocr_more_languages')
+    ocr_langs_with_more = ocr_langs + [_MORE_LANGS]
 
     pattern_rows = [
         [sg.Checkbox(_('pat_' + key), key='-PAT_' + key + '-', default=True)]
@@ -335,11 +468,18 @@ def prompt_auto_redact(window, total_pages, current_page):
         [sg.Checkbox(_('auto_force_ocr'), key='-AUTO_OCR-', default=False,
                      disabled=not ocr_ok),
          sg.Text(_('auto_ocr_lang')),
-         sg.Combo(ocr_langs, default_value=default_lang, key='-AUTO_LANG-',
-                  readonly=True, size=(10, 1), disabled=not ocr_ok)],
+         sg.Combo(ocr_langs_with_more, default_value=default_lang, key='-AUTO_LANG-',
+                  readonly=True, size=(10, 1), disabled=not ocr_ok,
+                  enable_events=True)],
         [sg.Text(_('ocr_model_label')),
          sg.Combo(list(model_display.values()), default_value=model_display[cur_model],
-                  key='-AUTO_MODEL-', readonly=True, size=(20, 1), disabled=not ocr_ok)],
+                  key='-AUTO_MODEL-', readonly=True, size=(20, 1), disabled=not ocr_ok,
+                  enable_events=True)],
+        [sg.Text(_('ocr_model_best_warning'), key='-AUTO_MODEL_WARN-',
+                 text_color='#B06000', font=('Helvetica', 8), visible=False)],
+        [sg.Text(_('ocr_dl_progress_label'), key='-AUTO_DL_TEXT-', visible=False),
+         sg.ProgressBar(100, orientation='h', size=(20, 12), key='-AUTO_DL_BAR-',
+                        visible=False, bar_color=('green', 'white'))],
     ]
     if not ocr_ok:
         layout.append([sg.Text(_('auto_ocr_unavailable'), font=('Helvetica', 8),
@@ -356,14 +496,122 @@ def prompt_auto_redact(window, total_pages, current_page):
         location=(int(win_loc_x + win_w / 2 - 200), int(win_loc_y + win_h / 2 - 220))
     )
 
+    # --- Download state ---
+    _dl_thread = [None]   # mutable container so inner functions can rebind
+    _dl_cancel = threading.Event()
+    _prev_lang = [default_lang]
+
+    def _start_download(lang_code, model):
+        """Kick off a background download for lang_code/model; update UI."""
+        _dl_cancel.clear()
+        dlg['-AUTO_OK-'].update(disabled=True)
+        dlg['-AUTO_DL_TEXT-'].update(
+            value=_('ocr_downloading', lang=lang_code), visible=True)
+        dlg['-AUTO_DL_BAR-'].update(current_count=0, visible=True)
+
+        def _worker(c=lang_code, m=model):
+            def _cb(pct):
+                dlg.write_event_value('-AUTO_DL_PROGRESS-', pct)
+            ok = ocr.ensure_language_for_model(c, m, _cb, _dl_cancel)
+            dlg.write_event_value('-AUTO_DL_DONE-', ok)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        _dl_thread[0] = t
+        t.start()
+
+    def _cancel_download():
+        """Signal any running download to stop and wait briefly."""
+        _dl_cancel.set()
+        t = _dl_thread[0]
+        if t and t.is_alive():
+            t.join(timeout=2)
+        _dl_thread[0] = None
+
+    def _handle_model_change(chosen_model, current_lang):
+        """React to a model combo change."""
+        _cancel_download()
+        if chosen_model == 'best':
+            dlg['-AUTO_MODEL_WARN-'].update(visible=True)
+            if (current_lang and current_lang != _MORE_LANGS
+                    and not ocr.is_language_downloaded(current_lang, 'best')):
+                _start_download(current_lang, 'best')
+            else:
+                dlg['-AUTO_OK-'].update(disabled=False)
+                dlg['-AUTO_DL_BAR-'].update(visible=False)
+                dlg['-AUTO_DL_TEXT-'].update(visible=False)
+        else:
+            dlg['-AUTO_MODEL_WARN-'].update(visible=False)
+            dlg['-AUTO_DL_BAR-'].update(visible=False)
+            dlg['-AUTO_DL_TEXT-'].update(visible=False)
+            dlg['-AUTO_OK-'].update(disabled=False)
+
+    # Initialise download state based on persisted model choice.
+    if ocr_ok and cur_model == 'best':
+        dlg['-AUTO_MODEL_WARN-'].update(visible=True)
+        if not ocr.is_language_downloaded(default_lang, 'best'):
+            _start_download(default_lang, 'best')
+
     result = None
     while True:
-        ev, vals = dlg.read()
+        running = _dl_thread[0] is not None and _dl_thread[0].is_alive()
+        ev, vals = dlg.read(timeout=100 if running else None)
+
         if ev in (sg.WINDOW_CLOSED, '-AUTO_CANCEL-'):
             result = None
             break
+
+        elif ev == sg.TIMEOUT_EVENT:
+            pass
+
+        elif ev == '-AUTO_DL_PROGRESS-':
+            dlg['-AUTO_DL_BAR-'].update(current_count=vals['-AUTO_DL_PROGRESS-'])
+
+        elif ev == '-AUTO_DL_DONE-':
+            _dl_thread[0] = None
+            dlg['-AUTO_DL_BAR-'].update(visible=False)
+            dlg['-AUTO_DL_TEXT-'].update(visible=False)
+            if vals['-AUTO_DL_DONE-']:
+                dlg['-AUTO_OK-'].update(disabled=False)
+            else:
+                dlg['-AUTO_OK-'].update(disabled=False)
+                dlg['-AUTO_MODEL_WARN-'].update(
+                    _('ocr_dl_failed'), text_color='#B00020', visible=True)
+
+        elif ev == '-AUTO_MODEL-':
+            chosen_model = model_codes.get(vals['-AUTO_MODEL-'], cur_model)
+            current_lang = vals.get('-AUTO_LANG-', default_lang)
+            if current_lang == _MORE_LANGS:
+                current_lang = _prev_lang[0]
+            _handle_model_change(chosen_model, current_lang)
+
+        elif ev == '-AUTO_LANG-':
+            chosen = vals['-AUTO_LANG-']
+            if chosen == _MORE_LANGS:
+                # Restore previous value; open language downloader sub-dialog.
+                dlg['-AUTO_LANG-'].update(value=_prev_lang[0])
+                _cancel_download()
+                chosen_model = model_codes.get(vals.get('-AUTO_MODEL-'), cur_model)
+                newly_downloaded = prompt_download_languages(dlg, chosen_model)
+                if newly_downloaded:
+                    updated = ocr.available_languages() or ['eng']
+                    updated_with_more = updated + [_MORE_LANGS]
+                    keep = _prev_lang[0] if _prev_lang[0] in updated else updated[0]
+                    dlg['-AUTO_LANG-'].update(values=updated_with_more, value=keep)
+                    _prev_lang[0] = keep
+                # Re-evaluate download need after language refresh.
+                chosen_model = model_codes.get(vals.get('-AUTO_MODEL-'), cur_model)
+                _handle_model_change(chosen_model, _prev_lang[0])
+            else:
+                _prev_lang[0] = chosen
+                chosen_model = model_codes.get(vals.get('-AUTO_MODEL-'), cur_model)
+                if (chosen_model == 'best'
+                        and not ocr.is_language_downloaded(chosen, 'best')):
+                    _cancel_download()
+                    _start_download(chosen, 'best')
+
         elif ev in ('-AUTO_ALL-', '-AUTO_CURRENT-', '-AUTO_SEL-'):
             dlg['-AUTO_RANGE-'].update(disabled=not vals['-AUTO_SEL-'])
+
         elif ev == '-AUTO_OK-':
             patterns = [key for key in textsearch.available_patterns()
                         if vals.get('-PAT_' + key + '-')]
@@ -380,15 +628,19 @@ def prompt_auto_redact(window, total_pages, current_page):
                 target = [current_page]
             else:
                 target = parse_page_range(vals['-AUTO_RANGE-'], total_pages)
+            lang_val = vals.get('-AUTO_LANG-') or default_lang
+            if lang_val == _MORE_LANGS:
+                lang_val = _prev_lang[0]
             result = {
                 'patterns': patterns,
                 'keywords': keywords,
                 'target': target,
                 'force_ocr': bool(vals.get('-AUTO_OCR-')),
-                'ocr_lang': vals.get('-AUTO_LANG-') or default_lang,
+                'ocr_lang': lang_val,
             }
             break
 
+    _cancel_download()
     dlg.close()
     return result
 
