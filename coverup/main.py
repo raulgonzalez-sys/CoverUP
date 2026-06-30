@@ -586,7 +586,7 @@ def main():
     end_point = (0, 0)
     output_quality = 'high'
     edit_mode = 'draw'
-    redact_mode = 'all'
+    redact_mode = 'single'
     pointer_cursor = 'arrow' if sg.running_windows() else 'left_ptr'
     drawing_cursor = 'crosshair'
     image_bg_color = 'gray'

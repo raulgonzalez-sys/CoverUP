@@ -45,7 +45,7 @@ REDACT_MODES = {
     'ask':    ('RMODE_ask',    'REDACT_ICON_ask',    'redact_ask',    '#FB8C00'),
 }
 
-REDACT_DEFAULT_MODE = 'all'
+REDACT_DEFAULT_MODE = 'single'
 
 SIDEBAR_WIDTH_FRACTION = 0.2
 
