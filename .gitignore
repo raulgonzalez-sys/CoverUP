@@ -80,3 +80,8 @@ builddir/
 parts/
 prime/
 stage/
+
+# Local package build output
+dist-deb/
+dist-rpm/
+dist-appimage/
