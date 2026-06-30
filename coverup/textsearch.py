@@ -38,6 +38,20 @@ PATTERN_DEFS = {
     'creditcard': r'\b(?:\d[ \-]?){13,19}\b',
     # Phone numbers: optional +/00 country code then 8-12 grouped digits.
     'phone': r'(?:(?:\+|00)\d{1,3}[ .\-]?)?(?:\d[ .\-]?){8,11}\d',
+    # Postal/street addresses: a street-type word through the rest of the line
+    # (street name, number, floor, postcode, town). Deliberately greedy — for
+    # redaction it is safer to cover the whole address line.
+    'address': r'\b(?:calle|c/|avda?\.?|avenida|av\.?|plaza|pl\.?|paseo|p[ºo]\.?|'
+               r'camino|carretera|ctra\.?|ronda|traves[ií]a|glorieta|callej[oó]n|'
+               r'urbanizaci[oó]n|urb\.?|pol[ií]gono)\b[^\n]{2,80}',
+}
+
+# Patterns relaxed for the OCR path, where common character confusions break an
+# exact match (e.g. Tesseract reading "@" as "O"). Used only on OCR'd text via
+# ``ocr_tolerant=True`` so the digital-PDF path stays strict. Redaction only
+# needs the *location*, so tolerating a misread keeps sensitive data covered.
+PATTERN_DEFS_OCR = {
+    'email': r'[A-Za-z0-9._%+\-]+[@oO0©][A-Za-z0-9.\-]+\.[A-Za-z]{2,}',
 }
 
 # Default amount of padding (in pixels at 144 DPI) added around each detected
@@ -50,12 +64,14 @@ def available_patterns():
     return list(PATTERN_DEFS.keys())
 
 
-def _compile(patterns, keywords):
+def _compile(patterns, keywords, ocr_tolerant=False):
     """Build a single combined regex from the chosen presets and keywords.
 
     Args:
         patterns: Iterable of keys from :data:`PATTERN_DEFS`.
         keywords: Iterable of literal strings to match case-insensitively.
+        ocr_tolerant: When True, use the relaxed :data:`PATTERN_DEFS_OCR`
+            variant for any pattern that has one (for matching OCR'd text).
 
     Returns:
         A compiled ``re.Pattern`` (case-insensitive), or ``None`` if nothing
@@ -63,7 +79,11 @@ def _compile(patterns, keywords):
     """
     parts = []
     for key in patterns or ():
-        frag = PATTERN_DEFS.get(key)
+        frag = None
+        if ocr_tolerant:
+            frag = PATTERN_DEFS_OCR.get(key)
+        if frag is None:
+            frag = PATTERN_DEFS.get(key)
         if frag:
             parts.append(frag)
     for kw in keywords or ():
@@ -112,7 +132,8 @@ def _union(boxes):
     return (min(lefts), min(tops), max(rights), max(bottoms))
 
 
-def match_units(units, patterns=None, keywords=None, padding=DEFAULT_PADDING):
+def match_units(units, patterns=None, keywords=None, padding=DEFAULT_PADDING,
+                ocr_tolerant=False):
     """Find pattern/keyword hits in a list of text units and return rectangles.
 
     Args:
@@ -123,6 +144,7 @@ def match_units(units, patterns=None, keywords=None, padding=DEFAULT_PADDING):
         patterns: Iterable of keys from :data:`PATTERN_DEFS` to enable.
         keywords: Iterable of literal keyword strings to match.
         padding: Pixels to grow each rectangle on every side.
+        ocr_tolerant: When True, use relaxed pattern variants for OCR'd text.
 
     Returns:
         list[tuple]: ``(start_xy, end_xy)`` rectangles in original-image pixel
@@ -130,7 +152,7 @@ def match_units(units, patterns=None, keywords=None, padding=DEFAULT_PADDING):
         bottom-right corner. Overlapping hits are merged so text is never
         barred twice. Empty if nothing matched.
     """
-    regex = _compile(patterns, keywords)
+    regex = _compile(patterns, keywords, ocr_tolerant=ocr_tolerant)
     if regex is None or not units:
         return []
 

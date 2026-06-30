@@ -199,8 +199,6 @@ def create_layout(icons, image_bg_color='gray'):
                  background_color=sidebar_bg, pad=((6, 6), (4, 2)))],
         [sg.Button(_('btn_auto_redact'), key='AUTO_REDACT', expand_x=True,
                    tooltip=_('tooltip_auto_redact'), pad=((8, 6), 3))],
-        [sg.Button(_('btn_metadata'), key='METADATA', expand_x=True,
-                   tooltip=_('tooltip_metadata'), pad=((8, 6), 3))],
         [sg.HorizontalSeparator(pad=((6, 6), (10, 4)))],
         [sg.Text(_('thumbs_section'), font=('Helvetica', 10, 'bold'), text_color='white',
                  background_color=sidebar_bg, pad=((6, 6), (2, 4)))],

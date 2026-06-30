@@ -16,7 +16,6 @@ import argparse
 import subprocess
 import tkinter as tk
 from pathlib import Path
-from datetime import datetime
 from multiprocessing import freeze_support
 
 import FreeSimpleGUI as sg
@@ -198,19 +197,14 @@ def prompt_export_target(window, total_pages, current_page):
     """Radio dialog asking which pages to export.
 
     Mirrors the redaction-mode radial: 'All' (default), 'Current page' or a
-    'Page selection' (with a range field enabled only for that option). Also
-    offers an optional searchable-export checkbox (OCR text layer), disabled
-    with a hint when Tesseract is not installed.
+    'Page selection' (with a range field enabled only for that option).
 
     Returns:
-        tuple: ``(pages, make_searchable)`` where ``pages`` is a sorted list of
-        0-based page indices (possibly empty if a selection matched nothing),
-        or ``(None, False)`` if the user cancelled.
+        list[int]: Sorted 0-based page indices (possibly empty if a selection
+        matched nothing), or ``None`` if the user cancelled.
     """
     win_loc_x, win_loc_y = window.current_location()
     win_w, win_h = window.current_size_accurate()
-
-    ocr_ok = ocr.is_available()
 
     layout = [
         [sg.Text(_('export_target_title'))],
@@ -221,15 +215,9 @@ def prompt_export_target(window, total_pages, current_page):
         [sg.Radio(_('export_selection'), 'EXPGRP', key='-EXP_SEL-', enable_events=True),
          sg.Input('', size=(16, 1), key='-EXP_RANGE-', disabled=True,
                   tooltip=_('range_prompt', total=total_pages))],
-        [sg.HorizontalSeparator()],
-        [sg.Checkbox(_('exp_searchable'), key='-EXP_OCR-', default=False,
-                     disabled=not ocr_ok)],
+        [sg.Push(), sg.Button(_('btn_ok'), key='-EXP_OK-'),
+         sg.Button(_('btn_cancel'), key='-EXP_CANCEL-')],
     ]
-    if not ocr_ok:
-        layout.append([sg.Text(_('exp_searchable_na'), font=('Helvetica', 8),
-                               text_color='#B00020')])
-    layout.append([sg.Push(), sg.Button(_('btn_ok'), key='-EXP_OK-'),
-                   sg.Button(_('btn_cancel'), key='-EXP_CANCEL-')])
 
     dlg = sg.Window(
         _('export_target_title'),
@@ -240,22 +228,21 @@ def prompt_export_target(window, total_pages, current_page):
         location=(int(win_loc_x + win_w / 2 - 180), int(win_loc_y + win_h / 2 - 100))
     )
 
-    result = (None, False)
+    result = None
     while True:
         ev, vals = dlg.read()
         if ev in (sg.WINDOW_CLOSED, '-EXP_CANCEL-'):
-            result = (None, False)
+            result = None
             break
         elif ev in ('-EXP_ALL-', '-EXP_CURRENT-', '-EXP_SEL-'):
             dlg['-EXP_RANGE-'].update(disabled=not vals['-EXP_SEL-'])
         elif ev == '-EXP_OK-':
             if vals['-EXP_ALL-']:
-                pages = list(range(total_pages))
+                result = list(range(total_pages))
             elif vals['-EXP_CURRENT-']:
-                pages = [current_page]
+                result = [current_page]
             else:
-                pages = parse_page_range(vals['-EXP_RANGE-'], total_pages)
-            result = (pages, bool(vals.get('-EXP_OCR-')))
+                result = parse_page_range(vals['-EXP_RANGE-'], total_pages)
             break
 
     dlg.close()
@@ -397,119 +384,17 @@ def prompt_auto_redact(window, total_pages, current_page):
     return result
 
 
-def prompt_metadata(window, metadata):
-    """Dialog to edit the metadata written into exported PDFs.
-
-    Args:
-        window: The GUI window (for centering).
-        metadata: Current metadata dict ('title', 'author', 'subject',
-            'stamp').
-
-    Returns:
-        dict | None: The updated metadata dict, or ``None`` if cancelled.
-    """
-    win_loc_x, win_loc_y = window.current_location()
-    win_w, win_h = window.current_size_accurate()
-
-    layout = [
-        [sg.Text(_('meta_title'), font=('Helvetica', 11, 'bold'))],
-        [sg.Text(_('meta_field_title'), size=(10, 1)),
-         sg.Input(metadata.get('title', ''), key='-META_TITLE-', size=(36, 1))],
-        [sg.Text(_('meta_field_author'), size=(10, 1)),
-         sg.Input(metadata.get('author', ''), key='-META_AUTHOR-', size=(36, 1))],
-        [sg.Text(_('meta_field_subject'), size=(10, 1)),
-         sg.Input(metadata.get('subject', ''), key='-META_SUBJECT-', size=(36, 1))],
-        [sg.Checkbox(_('meta_stamp'), key='-META_STAMP-',
-                     default=metadata.get('stamp', True))],
-        [sg.Push(), sg.Button(_('btn_ok'), key='-META_OK-'),
-         sg.Button(_('btn_cancel'), key='-META_CANCEL-')],
-    ]
-
-    dlg = sg.Window(
-        _('meta_title'),
-        layout,
-        keep_on_top=True,
-        modal=True,
-        finalize=True,
-        location=(int(win_loc_x + win_w / 2 - 200), int(win_loc_y + win_h / 2 - 120))
-    )
-
-    result = None
-    while True:
-        ev, vals = dlg.read()
-        if ev in (sg.WINDOW_CLOSED, '-META_CANCEL-'):
-            result = None
-            break
-        elif ev == '-META_OK-':
-            result = {
-                'title': vals['-META_TITLE-'].strip(),
-                'author': vals['-META_AUTHOR-'].strip(),
-                'subject': vals['-META_SUBJECT-'].strip(),
-                'stamp': bool(vals['-META_STAMP-']),
-            }
-            break
-
-    dlg.close()
-    return result
-
-
-def _add_searchable_layer(out_pdf, img_bytes, ocr_lang):
-    """Overlay an invisible OCR text layer on the current PDF page.
-
-    The image is OCR'd *after* redaction (it is the blacked-out raster that was
-    just placed on the page), so covered text is physically absent and cannot
-    re-enter the text layer. The recognised words are written in invisible text
-    mode, aligned to the placed image, making the exported PDF searchable and
-    selectable without changing its appearance.
-
-    Coordinates: the image is placed at (0, 0) spanning ``out_pdf.w``, so one
-    image pixel maps to ``out_pdf.w / image_width`` points. ``pdf.text`` draws
-    at the glyph *baseline*, hence ``top + height`` (not ``top``).
-
-    Args:
-        out_pdf: The FPDF instance, positioned on the page holding the image.
-        img_bytes: JPEG bytes of the finalized (redacted) page image.
-        ocr_lang: Tesseract language string (e.g. ``'spa+eng'``).
-    """
-    from PIL import Image
-    from fpdf.enums import TextMode
-
-    with io.BytesIO(img_bytes) as buf:
-        image = Image.open(buf)
-        image.load()
-    try:
-        words = ocr.ocr_words(image, lang=ocr_lang)
-        img_w, img_h = image.size
-    finally:
-        image.close()
-
-    if not words or not img_w:
-        return
-
-    pt_per_px = out_pdf.w / img_w
-    out_pdf.set_font('Helvetica', size=8)
-    with out_pdf.local_context(text_mode=TextMode.INVISIBLE):
-        for w in words:
-            size = max(1.0, w['height'] * pt_per_px)
-            x = w['left'] * pt_per_px
-            baseline_y = (w['top'] + w['height']) * pt_per_px
-            try:
-                out_pdf.set_font_size(size)
-                out_pdf.text(x, baseline_y, w['text'])
-            except Exception:
-                # A word Helvetica can't encode (OCR garble, non-latin script)
-                # shouldn't abort the whole page — just skip it.
-                continue
-
-
 def export_pages_to_pdf(window, pages, save_file_path, output_quality,
-                        pointer_cursor, drawing_cursor,
-                        make_searchable=False, ocr_lang=None, metadata=None):
+                        pointer_cursor, drawing_cursor):
     """Render the given pages with their redactions and write them to a PDF.
 
     Uses chunked parallel processing to limit memory use, and handles the
     progress bar, busy cursor and memory cleanup. Works for any number of
     pages (whole document, a sub-range or a single page).
+
+    The output carries no document metadata (no title/author/creator/producer),
+    so it never identifies the tool or the user. fpdf2 still stamps a neutral
+    CreationDate, which cannot be cleanly suppressed.
 
     Args:
         window: The GUI window.
@@ -518,11 +403,6 @@ def export_pages_to_pdf(window, pages, save_file_path, output_quality,
         output_quality: 'high' or 'low'.
         pointer_cursor: Cursor to restore on the window when done.
         drawing_cursor: Cursor to restore on the graph when done.
-        make_searchable: When True (and OCR is available), add an invisible OCR
-            text layer so the exported PDF is searchable.
-        ocr_lang: Tesseract language string for the searchable layer.
-        metadata: Optional dict with 'title', 'author', 'subject' and 'stamp'
-            (bool) controlling the document metadata written to the output.
 
     Returns:
         int: Number of pages written.
@@ -530,25 +410,7 @@ def export_pages_to_pdf(window, pages, save_file_path, output_quality,
     Raises:
         Exception: Propagated from the export pipeline; caller shows the popup.
     """
-    metadata = metadata or {}
     out_pdf = FPDF(unit="pt")
-    # The creator tag is opt-in via metadata['stamp'] (default on) so privacy-
-    # minded users can omit the "CoverUP PDF" stamp entirely. fpdf2 also writes
-    # its own "/Producer (py-pdf/fpdf2 …)" tag by default, which would still
-    # reveal the tool — so clear it too when the stamp is turned off.
-    if metadata.get('stamp', True):
-        out_pdf.set_creator(f'CoverUp PDF {__version__}')
-    else:
-        out_pdf.set_producer('')
-    out_pdf.set_creation_date(datetime.today())
-    if metadata.get('title'):
-        out_pdf.set_title(metadata['title'])
-    if metadata.get('author'):
-        out_pdf.set_author(metadata['author'])
-    if metadata.get('subject'):
-        out_pdf.set_subject(metadata['subject'])
-
-    searchable = make_searchable and ocr.is_available()
 
     window.set_cursor('watch')
     window['-GRAPH-'].set_cursor('watch')
@@ -579,8 +441,6 @@ def export_pages_to_pdf(window, pages, save_file_path, output_quality,
         ):
             out_pdf.add_page(format=page_size)
             out_pdf.image(img_bytes, x=0, y=0, w=out_pdf.w)
-            if searchable:
-                _add_searchable_layer(out_pdf, img_bytes, ocr_lang)
             del img_bytes  # Release image bytes immediately after adding to PDF
             del page_size
 
@@ -727,8 +587,6 @@ def main():
     output_quality = 'high'
     edit_mode = 'draw'
     redact_mode = 'all'
-    # Metadata written into exported PDFs (configurable via the Metadata dialog).
-    pdf_metadata = {'title': '', 'author': '', 'subject': '', 'stamp': True}
     pointer_cursor = 'arrow' if sg.running_windows() else 'left_ptr'
     drawing_cursor = 'crosshair'
     image_bg_color = 'gray'
@@ -991,13 +849,6 @@ def main():
                 button_color='grey'
             )
 
-        elif event == 'METADATA':
-            updated = prompt_metadata(window, pdf_metadata)
-            if updated is not None:
-                pdf_metadata = updated
-                sg.popup_no_titlebar(_('meta_saved'), keep_on_top=True,
-                                     background_color='silver', button_color='grey')
-
         elif event == 'LOAD_PDF':
             workfile_manager.save(images, current_page, fill_color, output_quality)
 
@@ -1076,8 +927,8 @@ def main():
                 images[current_page].redo(window)
 
             elif event == 'SAVE_PDF':
-                # Ask which pages to export (and whether to make it searchable)
-                target, make_searchable = prompt_export_target(window, len(images), current_page)
+                # Ask which pages to export
+                target = prompt_export_target(window, len(images), current_page)
                 if target is None:
                     continue
                 if not target:
@@ -1107,10 +958,7 @@ def main():
                     try:
                         total_pages = export_pages_to_pdf(
                             window, export_pages, save_file_path,
-                            output_quality, pointer_cursor, drawing_cursor,
-                            make_searchable=make_searchable,
-                            ocr_lang=ocr.default_language(),
-                            metadata=pdf_metadata
+                            output_quality, pointer_cursor, drawing_cursor
                         )
 
                         workfile_manager.save(images, current_page, fill_color, output_quality)

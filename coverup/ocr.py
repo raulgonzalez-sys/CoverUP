@@ -334,17 +334,41 @@ def ocr_words(pil_image, lang=None, min_conf=30):
         return []
     import pytesseract
     from pytesseract import Output
+    from PIL import Image, ImageOps
 
     if lang is None:
         lang = default_language()
     lang = ensure_languages(lang) or BASE_LANGUAGE
 
+    # Preprocess for accuracy: Tesseract works best on high-contrast, ~300 DPI
+    # input. CoverUP rasterises pages at ~144 DPI, which is fine to display but
+    # low for OCR, so upscale small images and flatten to high-contrast grey.
+    # Boxes are reported back in the *original* pixel space (divided by the
+    # upscale factor), so callers' coordinate maths is unaffected.
+    factor = 1
+    try:
+        short_side = min(pil_image.size)
+        if short_side:
+            factor = max(1, min(3, round(2200 / short_side)))
+        work = ImageOps.autocontrast(pil_image.convert('L'))
+        if factor > 1:
+            work = work.resize((work.width * factor, work.height * factor),
+                               resample=Image.Resampling.LANCZOS)
+    except Exception:
+        work, factor = pil_image, 1
+
     try:
         data = pytesseract.image_to_data(
-            pil_image, lang=lang, config=_tessdata_config(), output_type=Output.DICT
+            work, lang=lang, config=_tessdata_config(), output_type=Output.DICT
         )
     except Exception:
         return []
+    finally:
+        if work is not pil_image:
+            try:
+                work.close()
+            except Exception:
+                pass
 
     words = []
     for i in range(len(data['text'])):
@@ -359,10 +383,10 @@ def ocr_words(pil_image, lang=None, min_conf=30):
             continue
         words.append({
             'text': text,
-            'left': int(data['left'][i]),
-            'top': int(data['top'][i]),
-            'width': int(data['width'][i]),
-            'height': int(data['height'][i]),
+            'left': int(int(data['left'][i]) / factor),
+            'top': int(int(data['top'][i]) / factor),
+            'width': int(int(data['width'][i]) / factor),
+            'height': int(int(data['height'][i]) / factor),
             'conf': conf,
             'block': int(data['block_num'][i]),
             'par': int(data['par_num'][i]),
@@ -431,4 +455,4 @@ def find_boxes_ocr(pil_image, patterns=None, keywords=None, lang=None,
     if not words:
         return []
     units = _words_to_units(words)
-    return match_units(units, patterns, keywords, padding)
+    return match_units(units, patterns, keywords, padding, ocr_tolerant=True)
