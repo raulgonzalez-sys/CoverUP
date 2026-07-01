@@ -28,6 +28,7 @@ Two features build on this module:
 """
 
 import os
+import re
 import json
 import sys
 import glob
@@ -47,11 +48,23 @@ BASE_LANGUAGE = 'eng'
 # on poor scans). The legacy "tessdata" repo is intentionally not offered: it
 # bundles the legacy engine we never use, so it is pure overhead.
 TESSDATA_MODELS = {
-    'fast': 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/{code}.traineddata',
-    'best': 'https://github.com/tesseract-ocr/tessdata_best/raw/main/{code}.traineddata',
+    'fast': 'https://github.com/tesseract-ocr/tessdata_fast/raw/{version}/{code}.traineddata',
+    'best': 'https://github.com/tesseract-ocr/tessdata_best/raw/{version}/{code}.traineddata',
 }
+# Immutable release tag the downloads are pinned to. A moving branch like
+# 'main' would let upstream (or anyone compromising it) silently swap the
+# model files we fetch; a tag keeps the download reproducible.
+TESSDATA_VERSION = '4.1.0'
 DEFAULT_OCR_MODEL = 'fast'
 _DOWNLOAD_TIMEOUT = 30
+# Upper bound for a single .traineddata download (largest 'best' models are
+# ~50 MB); protects against a hostile/broken server streaming endless data.
+_DOWNLOAD_MAX_BYTES = 128 * 1024 * 1024
+
+# Tesseract language codes are short [a-z_] identifiers (e.g. 'spa',
+# 'chi_sim'). Anything else is rejected before it is used to build a file
+# path or download URL.
+_LANG_CODE_RE = re.compile(r'\A[A-Za-z][A-Za-z0-9_]{1,23}\Z')
 
 # Map a CoverUP UI/system locale (2-letter) to a Tesseract language code.
 # Covers every language CoverUP's interface supports, plus Arabic.
@@ -271,21 +284,37 @@ def _copy_from_sources(code, target, userdir):
 
 def _download_model(code, target, userdir):
     """Download ``code``'s model for the active variant into target, atomically."""
-    url = TESSDATA_MODELS[get_ocr_model()].format(code=code)
-    tmp = None
+    url = TESSDATA_MODELS[get_ocr_model()].format(version=TESSDATA_VERSION, code=code)
+    fd = tmp = None
     try:
         fd, tmp = tempfile.mkstemp(dir=userdir, suffix='.part')
-        os.close(fd)
-        with urllib.request.urlopen(url, timeout=_DOWNLOAD_TIMEOUT) as resp:
-            data = resp.read()
-        if not data:
+        with os.fdopen(fd, 'wb') as fh:
+            fd = None  # now owned by the file object
+            with urllib.request.urlopen(url, timeout=_DOWNLOAD_TIMEOUT) as resp:
+                # Refuse a redirect that downgrades the connection to plain
+                # HTTP (the model would then be tamperable in transit).
+                if not resp.geturl().lower().startswith('https://'):
+                    raise ValueError('insecure redirect')
+                total = 0
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _DOWNLOAD_MAX_BYTES:
+                        raise ValueError('download exceeds size limit')
+                    fh.write(chunk)
+        if total == 0:
             os.remove(tmp)
             return False
-        with open(tmp, 'wb') as fh:
-            fh.write(data)
         os.replace(tmp, target)  # atomic
         return True
     except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
         try:
             if tmp and os.path.isfile(tmp):
                 os.remove(tmp)
@@ -310,7 +339,7 @@ def ensure_language(code):
         bool: True if the language is now available locally, False otherwise
         (e.g. download failed with no network).
     """
-    if not code:
+    if not code or not _LANG_CODE_RE.match(code):
         return False
     userdir = user_tessdata_dir()
     target = os.path.join(userdir, f'{code}.traineddata')
