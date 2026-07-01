@@ -4,6 +4,7 @@ Utility functions for CoverUP PDF.
 
 import io
 import os
+import re
 import sys
 import glob
 import hashlib
@@ -166,15 +167,28 @@ def find_fonts_folder(root):
 
 
 def encode_filepath(filepath):
-    """Create an MD5 hash of the filepath for use as a workfile name."""
-    hash_object = hashlib.md5(filepath.encode())
-    hex_dig = hash_object.hexdigest()
-    return hex_dig
+    """Create a SHA-256 hash of the filepath for use as a workfile name."""
+    return hashlib.sha256(filepath.encode()).hexdigest()
+
+
+def encode_filepath_legacy(filepath):
+    """MD5-based workfile name used by older releases (migration only)."""
+    return hashlib.md5(filepath.encode(), usedforsecurity=False).hexdigest()
+
+
+# Workfile names are hex digests: 64 chars (SHA-256) or 32 chars (legacy MD5).
+_WORKFILE_NAME_RE = re.compile(r'\A(?:[0-9a-f]{32}|[0-9a-f]{64})\Z')
 
 
 def delete_oldest_files(directory_path, file_limit=25):
-    """Delete oldest files in a directory to maintain a file limit."""
-    files = glob.glob(os.path.join(directory_path, '*'))
+    """Delete the oldest workfiles in a directory to maintain a file limit.
+
+    Only regular files whose name looks like a workfile hash are considered,
+    so other application data sharing the directory (config.json, tessdata,
+    cursor files, ...) is never deleted.
+    """
+    files = [f for f in glob.glob(os.path.join(directory_path, '*'))
+             if os.path.isfile(f) and _WORKFILE_NAME_RE.match(os.path.basename(f))]
 
     if len(files) > file_limit:
         sorted_files = sorted(files, key=os.path.getctime)
