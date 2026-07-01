@@ -102,6 +102,11 @@ TRANSLATIONS = {
         'auto_done_plural': 'Added {count} bars across {pages} pages.',
         'auto_nothing_selected': 'Select at least one pattern or enter a keyword.',
         'thumbs_section': 'Pages',
+        'tools_section': 'Tools',
+        'apply_section': 'Apply bars to',
+        'export_quality_label': 'Quality:',
+        'export_quality_high': 'High (200 dpi)',
+        'export_quality_low': 'Light — smaller file',
     },
     'de': {
         'app_title': 'CoverUP PDF',
@@ -269,6 +274,11 @@ TRANSLATIONS = {
         'auto_done_plural': 'Se añadieron {count} barras en {pages} páginas.',
         'auto_nothing_selected': 'Selecciona al menos un patrón o introduce una palabra clave.',
         'thumbs_section': 'Páginas',
+        'tools_section': 'Herramientas',
+        'apply_section': 'Aplicar barras a',
+        'export_quality_label': 'Calidad:',
+        'export_quality_high': 'Alta (200 ppp)',
+        'export_quality_low': 'Ligera — archivo más pequeño',
     },
     'fr': {
         'app_title': 'CoverUP PDF',

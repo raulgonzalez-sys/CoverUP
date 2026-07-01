@@ -30,7 +30,8 @@ from coverup.workfile import WorkfileManager
 from coverup.utils import parse_page_range
 from coverup.ui import (
     get_fontpath, create_icons, create_app_icon, create_layout,
-    set_tool, toggle_quality, toggle_color, set_redact_mode,
+    set_tool, toggle_color, set_redact_mode,
+    page_scope_rows, handle_scope_event, read_page_scope,
     SIDEBAR_WIDTH_FRACTION, TOOL_CURSORS, make_pan_cursor
 )
 from coverup.i18n import _, _plural
@@ -136,6 +137,7 @@ def _do_load_file(
     """
     window.set_cursor('watch')
     window['-GRAPH-'].set_cursor('watch')
+    window['-PROGRESS-'].update(current_count=0, visible=True)
     window.refresh()
 
     try:
@@ -154,15 +156,15 @@ def _do_load_file(
         # Apply restored settings if available
         if new_fill_color and fill_color != new_fill_color:
             fill_color = toggle_color(window, icons, fill_color)
-        if new_output_quality and output_quality != new_output_quality:
-            output_quality = toggle_quality(window, icons, output_quality)
+        if new_output_quality:
+            output_quality = new_output_quality
 
-        window['-PROGRESS-'].update(current_count=0)
         current_page = flip_to_page(window, new_images, current_page)
         window.set_title(_('app_title_with_file', filename=os.path.basename(file_path)))
 
         return (new_images, file_path, current_page, fill_color, output_quality)
     finally:
+        window['-PROGRESS-'].update(current_count=0, visible=False)
         window.set_cursor(pointer_cursor)
         window['-GRAPH-'].set_cursor(drawing_cursor)
 
@@ -193,28 +195,31 @@ def prompt_page_range(window, total_pages, prompt_key='range_prompt'):
     return parse_page_range(text, total_pages)
 
 
-def prompt_export_target(window, total_pages, current_page):
-    """Radio dialog asking which pages to export.
+def prompt_export_target(window, total_pages, current_page, output_quality):
+    """Dialog asking which pages to export and at what quality.
 
-    Mirrors the redaction-mode radial: 'All' (default), 'Current page' or a
-    'Page selection' (with a range field enabled only for that option).
+    Uses the shared page-scope selector plus a quality radio group (the
+    quality choice lives here, at the moment it matters, instead of as a
+    global toolbar toggle).
 
     Returns:
-        list[int]: Sorted 0-based page indices (possibly empty if a selection
-        matched nothing), or ``None`` if the user cancelled.
+        tuple: ``(target, quality)`` where ``target`` is a sorted list of
+        0-based page indices (possibly empty if a selection matched nothing)
+        or ``None`` if the user cancelled, and ``quality`` is ``'high'`` or
+        ``'low'`` (unchanged when cancelled).
     """
     win_loc_x, win_loc_y = window.current_location()
     win_w, win_h = window.current_size_accurate()
 
     layout = [
         [sg.Text(_('export_target_title'))],
-        [sg.Radio(_('export_all', total=total_pages), 'EXPGRP', default=True,
-                  key='-EXP_ALL-', enable_events=True)],
-        [sg.Radio(_('export_current', page=current_page + 1), 'EXPGRP',
-                  key='-EXP_CURRENT-', enable_events=True)],
-        [sg.Radio(_('export_selection'), 'EXPGRP', key='-EXP_SEL-', enable_events=True),
-         sg.Input('', size=(16, 1), key='-EXP_RANGE-', disabled=True,
-                  tooltip=_('range_prompt', total=total_pages))],
+        *page_scope_rows('EXP', total_pages, current_page),
+        [sg.HorizontalSeparator()],
+        [sg.Text(_('export_quality_label'))],
+        [sg.Radio(_('export_quality_high'), 'EXPQGRP',
+                  default=output_quality == 'high', key='-EXP_Q_HIGH-')],
+        [sg.Radio(_('export_quality_low'), 'EXPQGRP',
+                  default=output_quality == 'low', key='-EXP_Q_LOW-')],
         [sg.Push(), sg.Button(_('btn_ok'), key='-EXP_OK-'),
          sg.Button(_('btn_cancel'), key='-EXP_CANCEL-')],
     ]
@@ -225,28 +230,25 @@ def prompt_export_target(window, total_pages, current_page):
         keep_on_top=True,
         modal=True,
         finalize=True,
-        location=(int(win_loc_x + win_w / 2 - 180), int(win_loc_y + win_h / 2 - 100))
+        location=(int(win_loc_x + win_w / 2 - 180), int(win_loc_y + win_h / 2 - 140))
     )
 
     result = None
+    quality = output_quality
     while True:
         ev, vals = dlg.read()
         if ev in (sg.WINDOW_CLOSED, '-EXP_CANCEL-'):
             result = None
             break
-        elif ev in ('-EXP_ALL-', '-EXP_CURRENT-', '-EXP_SEL-'):
-            dlg['-EXP_RANGE-'].update(disabled=not vals['-EXP_SEL-'])
+        elif handle_scope_event(dlg, ev, vals, 'EXP'):
+            continue
         elif ev == '-EXP_OK-':
-            if vals['-EXP_ALL-']:
-                result = list(range(total_pages))
-            elif vals['-EXP_CURRENT-']:
-                result = [current_page]
-            else:
-                result = parse_page_range(vals['-EXP_RANGE-'], total_pages)
+            result = read_page_scope(vals, 'EXP', total_pages, current_page)
+            quality = 'low' if vals['-EXP_Q_LOW-'] else 'high'
             break
 
     dlg.close()
-    return result
+    return result, quality
 
 
 def detect_on_page(page, patterns, keywords, force_ocr, ocr_lang):
@@ -311,41 +313,35 @@ def prompt_auto_redact(window, total_pages, current_page):
     model_codes = {v: k for k, v in model_display.items()}
     cur_model = ocr.get_ocr_model()
 
+    pattern_keys = textsearch.available_patterns()
     pattern_rows = [
-        [sg.Checkbox(_('pat_' + key), key='-PAT_' + key + '-', default=True)]
-        for key in textsearch.available_patterns()
+        [sg.Checkbox(_('pat_' + key), key='-PAT_' + key + '-', default=True, size=(20, 1))
+         for key in pattern_keys[i:i + 2]]
+        for i in range(0, len(pattern_keys), 2)
+    ]
+    pattern_rows.append([sg.Text(_('auto_keywords_label')),
+                         sg.Input('', size=(26, 1), key='-AUTO_KW-')])
+
+    ocr_rows = [
+        [sg.Text(_('auto_ocr_lang')),
+         sg.Combo(ocr_langs, default_value=default_lang, key='-AUTO_LANG-',
+                  readonly=True, size=(9, 1), disabled=not ocr_ok),
+         sg.Text(_('ocr_model_label')),
+         sg.Combo(list(model_display.values()), default_value=model_display[cur_model],
+                  key='-AUTO_MODEL-', readonly=True, size=(16, 1), disabled=not ocr_ok)],
+        [sg.Checkbox(_('auto_force_ocr'), key='-AUTO_OCR-', default=False,
+                     disabled=not ocr_ok)],
     ]
 
     layout = [
         [sg.Text(_('auto_title'), font=('Helvetica', 11, 'bold'))],
-        [sg.Text(_('auto_detect_label'))],
-        *pattern_rows,
-        [sg.Text(_('auto_keywords_label'))],
-        [sg.Input('', size=(40, 1), key='-AUTO_KW-')],
-        [sg.HorizontalSeparator()],
-        [sg.Text(_('auto_scope_label'))],
-        [sg.Radio(_('export_all', total=total_pages), 'AUTOGRP', default=True,
-                  key='-AUTO_ALL-', enable_events=True)],
-        [sg.Radio(_('export_current', page=current_page + 1), 'AUTOGRP',
-                  key='-AUTO_CURRENT-', enable_events=True)],
-        [sg.Radio(_('export_selection'), 'AUTOGRP', key='-AUTO_SEL-', enable_events=True),
-         sg.Input('', size=(16, 1), key='-AUTO_RANGE-', disabled=True,
-                  tooltip=_('range_prompt', total=total_pages))],
-        [sg.HorizontalSeparator()],
-        [sg.Checkbox(_('auto_force_ocr'), key='-AUTO_OCR-', default=False,
-                     disabled=not ocr_ok),
-         sg.Text(_('auto_ocr_lang')),
-         sg.Combo(ocr_langs, default_value=default_lang, key='-AUTO_LANG-',
-                  readonly=True, size=(10, 1), disabled=not ocr_ok)],
-        [sg.Text(_('ocr_model_label')),
-         sg.Combo(list(model_display.values()), default_value=model_display[cur_model],
-                  key='-AUTO_MODEL-', readonly=True, size=(20, 1), disabled=not ocr_ok)],
+        [sg.Frame(_('auto_detect_label'), pattern_rows, expand_x=True)],
+        [sg.Frame(_('auto_scope_label'),
+                  page_scope_rows('AUTO', total_pages, current_page), expand_x=True)],
+        [sg.Frame('OCR', ocr_rows, expand_x=True)],
+        [sg.Push(), sg.Button(_('btn_ok'), key='-AUTO_OK-'),
+         sg.Button(_('btn_cancel'), key='-AUTO_CANCEL-')],
     ]
-    if not ocr_ok:
-        layout.append([sg.Text(_('auto_ocr_unavailable'), font=('Helvetica', 8),
-                               text_color='#B00020')])
-    layout.append([sg.Push(), sg.Button(_('btn_ok'), key='-AUTO_OK-'),
-                   sg.Button(_('btn_cancel'), key='-AUTO_CANCEL-')])
 
     dlg = sg.Window(
         _('auto_title'),
@@ -362,8 +358,8 @@ def prompt_auto_redact(window, total_pages, current_page):
         if ev in (sg.WINDOW_CLOSED, '-AUTO_CANCEL-'):
             result = None
             break
-        elif ev in ('-AUTO_ALL-', '-AUTO_CURRENT-', '-AUTO_SEL-'):
-            dlg['-AUTO_RANGE-'].update(disabled=not vals['-AUTO_SEL-'])
+        elif handle_scope_event(dlg, ev, vals, 'AUTO'):
+            continue
         elif ev == '-AUTO_OK-':
             patterns = [key for key in textsearch.available_patterns()
                         if vals.get('-PAT_' + key + '-')]
@@ -374,12 +370,7 @@ def prompt_auto_redact(window, total_pages, current_page):
                 continue
             # Persist the chosen OCR model quality for future downloads.
             ocr.set_ocr_model(model_codes.get(vals.get('-AUTO_MODEL-'), cur_model))
-            if vals['-AUTO_ALL-']:
-                target = list(range(total_pages))
-            elif vals['-AUTO_CURRENT-']:
-                target = [current_page]
-            else:
-                target = parse_page_range(vals['-AUTO_RANGE-'], total_pages)
+            target = read_page_scope(vals, 'AUTO', total_pages, current_page)
             result = {
                 'patterns': patterns,
                 'keywords': keywords,
@@ -423,6 +414,7 @@ def export_pages_to_pdf(window, pages, save_file_path, output_quality,
 
     window.set_cursor('watch')
     window['-GRAPH-'].set_cursor('watch')
+    window['-PROGRESS-'].update(current_count=0, visible=True)
     window.refresh()
 
     # Quality settings:
@@ -467,6 +459,7 @@ def export_pages_to_pdf(window, pages, save_file_path, output_quality,
         # Ensure cleanup even on error
         del out_pdf
         gc.collect()
+        window['-PROGRESS-'].update(current_count=0, visible=False)
         window.set_cursor(pointer_cursor)
         window['-GRAPH-'].set_cursor(drawing_cursor)
 
@@ -581,7 +574,7 @@ def main():
     cli_file_path = args.file
 
     # Initialize
-    about_text = _('about_text', version=__version__)
+    about_text = _('about_text', version=__version__) + '\n\n' + _('hint_pan')
 
     first_load = True
     history_length = 30
@@ -824,9 +817,6 @@ def main():
         elif event == 'CHANGE_COLOR':
             fill_color = toggle_color(window, icons, fill_color)
 
-        elif event == 'TOGGLE_QUALITY':
-            output_quality = toggle_quality(window, icons, output_quality)
-
         elif event == 'EDIT_MODE':
             edit_mode = 'draw' if edit_mode == 'erase' else 'erase'
             edit_mode = set_tool(window, icons, edit_mode)
@@ -841,7 +831,7 @@ def main():
             redact_mode = set_redact_mode(window, icons, 'ask')
 
         elif event == 'REDACT_CYCLE':
-            cycle = ['all', 'single', 'ask']
+            cycle = ['single', 'all', 'ask']
             redact_mode = set_redact_mode(
                 window, icons, cycle[(cycle.index(redact_mode) + 1) % len(cycle)]
             )
@@ -936,8 +926,10 @@ def main():
                 images[current_page].redo(window)
 
             elif event == 'SAVE_PDF':
-                # Ask which pages to export
-                target = prompt_export_target(window, len(images), current_page)
+                # Ask which pages to export and at what quality
+                target, output_quality = prompt_export_target(
+                    window, len(images), current_page, output_quality
+                )
                 if target is None:
                     continue
                 if not target:
@@ -1005,6 +997,7 @@ def main():
 
                 window.set_cursor('watch')
                 window['-GRAPH-'].set_cursor('watch')
+                window['-PROGRESS-'].update(current_count=0, visible=True)
                 total_added = 0
                 pages_hit = 0
                 try:
@@ -1023,7 +1016,7 @@ def main():
                 except Exception as e:
                     sg.popup(_('error_occurred'), str(e), keep_on_top=True)
                 finally:
-                    window['-PROGRESS-'].update(current_count=0)
+                    window['-PROGRESS-'].update(current_count=0, visible=False)
                     window.set_cursor(pointer_cursor)
                     window['-GRAPH-'].set_cursor(drawing_cursor)
 

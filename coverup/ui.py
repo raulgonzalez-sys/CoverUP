@@ -5,7 +5,9 @@ UI layout and icon definitions for CoverUP PDF.
 import os
 import FreeSimpleGUI as sg
 
-from coverup.utils import get_script_root, find_fonts_folder, make_icons, draw_character
+from coverup.utils import (
+    get_script_root, find_fonts_folder, make_icons, draw_character, parse_page_range
+)
 from coverup.i18n import _
 
 
@@ -39,10 +41,11 @@ GLYPHS = {
 
 REDACT_INACTIVE_COLOR = '#C8C8C8'
 
+# mode -> (event key of the clickable icon, glyph name, active color)
 REDACT_MODES = {
-    'all':    ('RMODE_all',    'REDACT_ICON_all',    'redact_all',    '#43A047'),
-    'single': ('RMODE_single', 'REDACT_ICON_single', 'redact_single', '#1E88E5'),
-    'ask':    ('RMODE_ask',    'REDACT_ICON_ask',    'redact_ask',    '#FB8C00'),
+    'single': ('RMODE_single', 'redact_single', '#1E88E5'),
+    'all':    ('RMODE_all',    'redact_all',    '#43A047'),
+    'ask':    ('RMODE_ask',    'redact_ask',    '#FB8C00'),
 }
 
 REDACT_DEFAULT_MODE = 'single'
@@ -65,7 +68,7 @@ def get_fontpath():
 def create_icons(fontpath):
     """Create the icons dictionary from the glyphs."""
     icons = make_icons(GLYPHS, fontpath)
-    for mode, (_radio, _ikey, glyph, color) in REDACT_MODES.items():
+    for mode, (_key, glyph, color) in REDACT_MODES.items():
         icons[glyph + '_active'] = draw_character(GLYPHS[glyph], fontpath, color=color)
         icons[glyph + '_off'] = draw_character(GLYPHS[glyph], fontpath, color=REDACT_INACTIVE_COLOR)
     return icons
@@ -160,51 +163,40 @@ def create_layout(icons, image_bg_color='gray'):
     ]]
 
     sidebar_bg = '#4d4d4d'
+    section_font = ('Helvetica', 8, 'bold')
+    section_color = '#A9AFB4'
 
-    sidebar = [
-        [sg.Text(_('redact_section'), font=('Helvetica', 10, 'bold'), text_color='white',
-                 background_color=sidebar_bg, pad=((6, 6), (8, 0)))],
-        [sg.Text('', key='-REDACT_MODE-', size=(30, 2), text_color='#FFD54F',
-                 background_color=sidebar_bg, pad=((6, 6), (0, 6)))],
-    ]
-
-    for mode, (radio_key, icon_key, glyph, _color) in REDACT_MODES.items():
+    mode_icons = []
+    for mode, (event_key, glyph, _color) in REDACT_MODES.items():
         is_default = mode == REDACT_DEFAULT_MODE
         icon_data = icons[glyph + ('_active' if is_default else '_off')]
-        sidebar.append([
-            sg.Image(icon_data, key=icon_key, pad=((8, 2), 2), background_color=sidebar_bg),
-            sg.Radio(_('redact_mode_' + mode), 'REDACT_GRP', key=radio_key, default=is_default,
-                     enable_events=True, text_color='white', background_color=sidebar_bg,
-                     pad=((2, 6), 2)),
-        ])
+        mode_icons.append(
+            sg.Image(icon_data, key=event_key, tooltip=_('tooltip_redact_' + mode),
+                     pad=((8, 4), 2) if not mode_icons else ((4, 4), 2),
+                     enable_events=True, background_color=sidebar_bg)
+        )
 
-    sidebar += [
-        [sg.HorizontalSeparator(pad=((6, 6), (10, 8)))],
+    sidebar = [
+        [sg.Text(_('tools_section').upper(), font=section_font, text_color=section_color,
+                 background_color=sidebar_bg, pad=((8, 6), (10, 2)))],
         [
-            sg.Image(icons['undo'], key='UNDO', tooltip=_('tooltip_undo'),
-                     pad=((8, 4), 4), enable_events=True, background_color=sidebar_bg),
-            sg.Image(icons['redo'], key='REDO', tooltip=_('tooltip_redo'),
-                     pad=((4, 6), 4), enable_events=True, background_color=sidebar_bg),
-        ],
-        [
+            sg.Image(icons['inkdrop_black'], key='CHANGE_COLOR', tooltip=_('tooltip_color'),
+                     pad=((8, 4), 2), enable_events=True, background_color=sidebar_bg),
             sg.Image(icons['eraser_off'], key='EDIT_MODE', tooltip=_('tooltip_eraser'),
-                     pad=((8, 4), 4), enable_events=True, background_color=sidebar_bg),
-            sg.Text(_('label_erase_zone'), text_color='white', background_color=sidebar_bg,
-                    pad=((2, 6), 4)),
+                     pad=((4, 4), 2), enable_events=True, background_color=sidebar_bg),
+            sg.Image(icons['delete_all'], key='DELETE_ALL', tooltip=_('tooltip_delete_all'),
+                     pad=((4, 6), 2), enable_events=True, background_color=sidebar_bg),
         ],
-        [sg.Text(_('hint_pan'), text_color='#B0B0B0', background_color=sidebar_bg,
-                 font=('Helvetica', 8), pad=((8, 6), (10, 4)))],
-        [sg.HorizontalSeparator(pad=((6, 6), (10, 8)))],
-        [sg.Text(_('auto_section'), font=('Helvetica', 10, 'bold'), text_color='white',
-                 background_color=sidebar_bg, pad=((6, 6), (4, 2)))],
+        [sg.Text(_('apply_section').upper(), font=section_font, text_color=section_color,
+                 background_color=sidebar_bg, pad=((8, 6), (12, 2)))],
+        mode_icons,
         [sg.Button(_('btn_auto_redact'), key='AUTO_REDACT', expand_x=True,
-                   tooltip=_('tooltip_auto_redact'), pad=((8, 6), 3))],
-        [sg.HorizontalSeparator(pad=((6, 6), (10, 4)))],
-        [sg.Text(_('thumbs_section'), font=('Helvetica', 10, 'bold'), text_color='white',
-                 background_color=sidebar_bg, pad=((6, 6), (2, 4)))],
+                   tooltip=_('tooltip_auto_redact'), pad=((8, 6), (12, 4)))],
+        [sg.Text(_('thumbs_section').upper(), font=section_font, text_color=section_color,
+                 background_color=sidebar_bg, pad=((8, 6), (12, 2)))],
         [sg.Column([], key='-THUMBS-', background_color=sidebar_bg, scrollable=True,
                    vertical_scroll_only=True, expand_x=True, expand_y=True,
-                   pad=(0, 0), size=(210, 320),
+                   pad=(0, 0), size=(210, 560),
                    sbar_background_color='darkgrey', sbar_arrow_color='silver')],
     ]
 
@@ -214,11 +206,9 @@ def create_layout(icons, image_bg_color='gray'):
                      pad=((6, 0), 0), enable_events=True, background_color=image_bg_color),
             sg.Image(icons['save_pdf'], key='SAVE_PDF', tooltip=_('tooltip_save'),
                      pad=0, enable_events=True, background_color=image_bg_color),
-            sg.Image(icons['delete_all'], key='DELETE_ALL', tooltip=_('tooltip_delete_all'),
-                     pad=0, enable_events=True, background_color=image_bg_color),
-            sg.Image(icons['inkdrop_black'], key='CHANGE_COLOR', tooltip=_('tooltip_color'),
-                     pad=0, enable_events=True, background_color=image_bg_color),
-            sg.Image(icons['high_quality'], key='TOGGLE_QUALITY', tooltip=_('tooltip_quality'),
+            sg.Image(icons['undo'], key='UNDO', tooltip=_('tooltip_undo'),
+                     pad=((14, 0), 0), enable_events=True, background_color=image_bg_color),
+            sg.Image(icons['redo'], key='REDO', tooltip=_('tooltip_redo'),
                      pad=0, enable_events=True, background_color=image_bg_color),
             sg.Push(background_color='gray'),
             sg.Image(icons['left'], key='BACK', tooltip=_('tooltip_prev'),
@@ -290,11 +280,49 @@ def create_layout(icons, image_bg_color='gray'):
                 size_px=(50, 5),
                 pad=(0, 5),
                 expand_x=True,
+                visible=False,
             )
         ],
     ]
 
     return layout
+
+
+def page_scope_rows(prefix, total_pages, current_page):
+    """Rows for the shared "which pages" selector used by dialogs.
+
+    Produces the radio group [All / Current page / Selection + range input]
+    with keys ``-{prefix}_ALL-``, ``-{prefix}_CURRENT-``, ``-{prefix}_SEL-``
+    and ``-{prefix}_RANGE-``. Pair with :func:`handle_scope_event` and
+    :func:`read_page_scope`.
+    """
+    return [
+        [sg.Radio(_('export_all', total=total_pages), prefix + 'GRP', default=True,
+                  key=f'-{prefix}_ALL-', enable_events=True)],
+        [sg.Radio(_('export_current', page=current_page + 1), prefix + 'GRP',
+                  key=f'-{prefix}_CURRENT-', enable_events=True)],
+        [sg.Radio(_('export_selection'), prefix + 'GRP', key=f'-{prefix}_SEL-',
+                  enable_events=True),
+         sg.Input('', size=(16, 1), key=f'-{prefix}_RANGE-', disabled=True,
+                  tooltip=_('range_prompt', total=total_pages))],
+    ]
+
+
+def handle_scope_event(dialog, event, values, prefix):
+    """Sync the range input with the scope radios. True if event was consumed."""
+    if event in (f'-{prefix}_ALL-', f'-{prefix}_CURRENT-', f'-{prefix}_SEL-'):
+        dialog[f'-{prefix}_RANGE-'].update(disabled=not values[f'-{prefix}_SEL-'])
+        return True
+    return False
+
+
+def read_page_scope(values, prefix, total_pages, current_page):
+    """Return the selected 0-based page indices from a scope selector."""
+    if values[f'-{prefix}_ALL-']:
+        return list(range(total_pages))
+    if values[f'-{prefix}_CURRENT-']:
+        return [current_page]
+    return parse_page_range(values[f'-{prefix}_RANGE-'], total_pages)
 
 
 TOOL_CURSORS = {'draw': 'crosshair', 'erase': 'left_ptr'}
@@ -332,17 +360,14 @@ def set_redact_mode(window, icons, redact_mode):
     """Select which pages a newly drawn bar is applied to.
 
     Modes:
-        'all'    - replicate the bar onto every page (default).
-        'single' - apply the bar to the current page only.
+        'single' - apply the bar to the current page only (default).
+        'all'    - replicate the bar onto every page.
         'ask'    - prompt for a page range each time a bar is drawn.
 
-    Syncs the radio buttons, colour-codes the selected mode's icon (others are
-    muted grey) and updates the status text so the current mode is always
-    visible. Returns the mode for assignment.
+    Colour-codes the selected mode's icon (others are muted grey).
+    Returns the mode for assignment.
     """
-    for mode, (radio_key, icon_key, glyph, _color) in REDACT_MODES.items():
+    for mode, (event_key, glyph, _color) in REDACT_MODES.items():
         selected = mode == redact_mode
-        window[icon_key].update(data=icons[glyph + ('_active' if selected else '_off')])
-        window[radio_key].update(value=selected)
-    window['-REDACT_MODE-'].update(_('redact_mode_status', mode=_('redact_mode_' + redact_mode)))
+        window[event_key].update(data=icons[glyph + ('_active' if selected else '_off')])
     return redact_mode
