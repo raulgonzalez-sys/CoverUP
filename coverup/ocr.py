@@ -53,6 +53,74 @@ TESSDATA_MODELS = {
 DEFAULT_OCR_MODEL = 'fast'
 _DOWNLOAD_TIMEOUT = 30
 
+# All Tesseract language codes offered in the download dialog, mapped to
+# their English display names.  Covers the full tessdata_fast/best catalogue
+# of commonly-used languages; less-common scripts are intentionally omitted.
+ALL_TESSERACT_LANGUAGE_NAMES = {
+    'afr': 'Afrikaans',
+    'ara': 'Arabic',
+    'ben': 'Bengali',
+    'bul': 'Bulgarian',
+    'cat': 'Catalan',
+    'ces': 'Czech',
+    'chi_sim': 'Chinese (Simplified)',
+    'chi_tra': 'Chinese (Traditional)',
+    'cym': 'Welsh',
+    'dan': 'Danish',
+    'deu': 'German',
+    'ell': 'Greek',
+    'eng': 'English',
+    'epo': 'Esperanto',
+    'est': 'Estonian',
+    'eus': 'Basque',
+    'fas': 'Persian',
+    'fin': 'Finnish',
+    'fra': 'French',
+    'gle': 'Irish',
+    'glg': 'Galician',
+    'guj': 'Gujarati',
+    'heb': 'Hebrew',
+    'hin': 'Hindi',
+    'hrv': 'Croatian',
+    'hun': 'Hungarian',
+    'hye': 'Armenian',
+    'ind': 'Indonesian',
+    'isl': 'Icelandic',
+    'ita': 'Italian',
+    'jpn': 'Japanese',
+    'kan': 'Kannada',
+    'kat': 'Georgian',
+    'kor': 'Korean',
+    'lat': 'Latin',
+    'lav': 'Latvian',
+    'lit': 'Lithuanian',
+    'mal': 'Malayalam',
+    'mar': 'Marathi',
+    'mkd': 'Macedonian',
+    'mlt': 'Maltese',
+    'nld': 'Dutch',
+    'nor': 'Norwegian',
+    'pol': 'Polish',
+    'por': 'Portuguese',
+    'ron': 'Romanian',
+    'rus': 'Russian',
+    'slk': 'Slovak',
+    'slv': 'Slovenian',
+    'spa': 'Spanish',
+    'sqi': 'Albanian',
+    'srp': 'Serbian',
+    'swa': 'Swahili',
+    'swe': 'Swedish',
+    'tam': 'Tamil',
+    'tel': 'Telugu',
+    'tgl': 'Tagalog',
+    'tha': 'Thai',
+    'tur': 'Turkish',
+    'ukr': 'Ukrainian',
+    'urd': 'Urdu',
+    'vie': 'Vietnamese',
+}
+
 # Map a CoverUP UI/system locale (2-letter) to a Tesseract language code.
 # Covers every language CoverUP's interface supports, plus Arabic.
 LOCALE_TO_TESSERACT = {
@@ -199,6 +267,16 @@ def is_available():
     return _AVAILABLE
 
 
+def _tessdata_dir_for_model(model):
+    """Return (creating if needed) tessdata dir for a specific model variant."""
+    path = os.path.join(_data_root(), 'tessdata', model)
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        pass
+    return path
+
+
 def user_tessdata_dir():
     """Return (creating if needed) CoverUP's writable tessdata dir.
 
@@ -206,12 +284,21 @@ def user_tessdata_dir():
     switching quality just points Tesseract at a different folder and each
     variant's models are downloaded and cached independently.
     """
-    path = os.path.join(_data_root(), 'tessdata', get_ocr_model())
-    try:
-        os.makedirs(path, exist_ok=True)
-    except Exception:
-        pass
-    return path
+    return _tessdata_dir_for_model(get_ocr_model())
+
+
+def is_language_downloaded(code, model):
+    """Return True if ``code``'s .traineddata file exists for the given model.
+
+    Args:
+        code: Tesseract language code (e.g. ``'spa'``).
+        model: Model variant to check (``'fast'`` or ``'best'``).
+
+    Returns:
+        bool: True if the file is present in the model's tessdata directory.
+    """
+    path = os.path.join(_data_root(), 'tessdata', model, f'{code}.traineddata')
+    return os.path.isfile(path)
 
 
 def _source_tessdata_dirs():
@@ -269,29 +356,59 @@ def _copy_from_sources(code, target, userdir):
     return False
 
 
-def _download_model(code, target, userdir):
-    """Download ``code``'s model for the active variant into target, atomically."""
-    url = TESSDATA_MODELS[get_ocr_model()].format(code=code)
+def _download_model_streamed(code, target, userdir, model,
+                             progress_cb=None, cancel_flag=None):
+    """Download ``code``'s model for the given variant into target, atomically.
+
+    Args:
+        code: Tesseract language code.
+        target: Destination ``.traineddata`` path.
+        userdir: Directory used for the temp file.
+        model: Model variant (``'fast'`` or ``'best'``).
+        progress_cb: Optional ``callable(percent: int)`` called 0–100 during
+            the download.  Only called when ``Content-Length`` is known.
+        cancel_flag: Optional ``threading.Event``; if set, the download is
+            abandoned and the temp file is removed.
+
+    Returns:
+        bool: True on success, False on failure or cancellation.
+    """
+    url = TESSDATA_MODELS[model].format(code=code)
     tmp = None
     try:
         fd, tmp = tempfile.mkstemp(dir=userdir, suffix='.part')
         os.close(fd)
         with urllib.request.urlopen(url, timeout=_DOWNLOAD_TIMEOUT) as resp:
-            data = resp.read()
-        if not data:
-            os.remove(tmp)
-            return False
-        with open(tmp, 'wb') as fh:
-            fh.write(data)
+            total = int(resp.headers.get('Content-Length') or 0)
+            downloaded = 0
+            with open(tmp, 'wb') as fh:
+                while True:
+                    if cancel_flag is not None and cancel_flag.is_set():
+                        return False
+                    chunk = resp.read(8192)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb and total > 0:
+                        progress_cb(min(99, int(downloaded * 100 / total)))
+        if progress_cb:
+            progress_cb(100)
         os.replace(tmp, target)  # atomic
         return True
     except Exception:
+        return False
+    finally:
         try:
             if tmp and os.path.isfile(tmp):
                 os.remove(tmp)
         except Exception:
             pass
-        return False
+
+
+def _download_model(code, target, userdir):
+    """Download ``code``'s model for the active variant into target, atomically."""
+    return _download_model_streamed(code, target, userdir, get_ocr_model())
 
 
 def ensure_language(code):
@@ -335,6 +452,43 @@ def ensure_languages(lang):
     codes = [c for c in (lang or '').split('+') if c]
     ok = [c for c in codes if ensure_language(c)]
     return '+'.join(ok)
+
+
+def ensure_language_for_model(code, model, progress_cb=None, cancel_flag=None):
+    """Make a single language available for a specific model variant.
+
+    Like :func:`ensure_language` but operates on an explicit *model* without
+    touching the global ``_OCR_MODEL``.  Safe to call from a background thread.
+
+    Args:
+        code: A Tesseract language code (e.g. ``'spa'``).
+        model: Model variant to use (``'fast'`` or ``'best'``).
+        progress_cb: Optional ``callable(percent: int)`` for download progress.
+        cancel_flag: Optional ``threading.Event``; download aborts if set.
+
+    Returns:
+        bool: True if the language is now available locally.
+    """
+    if not code or model not in TESSDATA_MODELS:
+        return False
+    userdir = _tessdata_dir_for_model(model)
+    target = os.path.join(userdir, f'{code}.traineddata')
+    if os.path.isfile(target):
+        if progress_cb:
+            progress_cb(100)
+        return True
+    if model == 'best':
+        return (_download_model_streamed(code, target, userdir, model,
+                                         progress_cb, cancel_flag)
+                or _copy_from_sources(code, target, userdir))
+    return (_copy_from_sources(code, target, userdir)
+            or _download_model_streamed(code, target, userdir, model,
+                                         progress_cb, cancel_flag))
+
+
+def available_languages_for_model(model):
+    """Return sorted language codes already downloaded for a specific model."""
+    return sorted(_langs_in_dir(_tessdata_dir_for_model(model)) - {'osd'})
 
 
 def system_language():
