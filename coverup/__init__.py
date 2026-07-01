@@ -28,7 +28,7 @@ Example usage:
     $ coverup document.pdf
     $ python -m coverup
 '''
-__version__ = '0.8.2'
+__version__ = '0.8.3'
 __author__ = 'Björn Seipel'
 __email__ = 'support@digidigital.de'
 __license__ = 'GPL-3.0'
