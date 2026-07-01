@@ -1036,6 +1036,12 @@ def main():
             window['-THUMBS-'].contents_changed()
         except Exception:
             pass
+        try:
+            canvas, _ = find_scroll_canvas(window['-THUMBS-'])
+            if canvas is not None:
+                canvas.yview_moveto(0)
+        except Exception:
+            pass
 
     # Initialise the redaction mode indicator
     redact_mode = set_redact_mode(window, icons, redact_mode)
