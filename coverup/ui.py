@@ -190,6 +190,9 @@ def create_layout(icons, image_bg_color='gray'):
         [sg.Text(_('apply_section').upper(), font=section_font, text_color=section_color,
                  background_color=sidebar_bg, pad=((8, 6), (12, 2)))],
         mode_icons,
+        [sg.Text(_('redact_status_' + REDACT_DEFAULT_MODE), key='-REDACT_MODE-',
+                 font=('Helvetica', 8), text_color='#FFD54F',
+                 background_color=sidebar_bg, pad=((8, 6), (2, 0)))],
         [sg.Button(_('btn_auto_redact'), key='AUTO_REDACT', expand_x=True,
                    tooltip=_('tooltip_auto_redact'), pad=((8, 6), (12, 4)))],
         [sg.Text(_('thumbs_section').upper(), font=section_font, text_color=section_color,
@@ -364,10 +367,12 @@ def set_redact_mode(window, icons, redact_mode):
         'all'    - replicate the bar onto every page.
         'ask'    - prompt for a page range each time a bar is drawn.
 
-    Colour-codes the selected mode's icon (others are muted grey).
-    Returns the mode for assignment.
+    Colour-codes the selected mode's icon (others are muted grey) and updates
+    the explanatory status line below the icons. Returns the mode for
+    assignment.
     """
     for mode, (event_key, glyph, _color) in REDACT_MODES.items():
         selected = mode == redact_mode
         window[event_key].update(data=icons[glyph + ('_active' if selected else '_off')])
+    window['-REDACT_MODE-'].update(_('redact_status_' + redact_mode))
     return redact_mode
